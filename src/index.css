@@ -1,0 +1,239 @@
+body {
+  margin: 0;
+  font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #EEF0F8;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border: 1px solid #c7c9d2;
+  border-radius: 28px;
+  padding: 8px 12px;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
+  gap: 8px;
+}
+
+.header > button,
+.header .actions button {
+  border: 1px solid #c7c9d2;
+  background: #ffffff;
+  border-radius: 12px;
+  color: #2b2f42;
+  font-size: 16px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.header > div:first-child {
+  flex: 1;
+  text-align: center;
+  font-weight: 700;
+  font-size: 18px;
+  color: #2b2f42;
+}
+
+.header .actions {
+  display: flex;
+  gap: 4px;
+}
+
+.header button.save {
+  background: #fff;
+  border: 1px solid #c7c9d2;
+  border-radius: 16px;
+  padding: 8px 14px;
+  font-weight: 700;
+}
+
+.main {
+  flex: 1;
+  min-height: 0; /* важно для скроллов дочерних секций */
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  gap: 10px;
+}
+
+.sidebar,
+.inspector,
+.zoom {
+  background: #ffffff;
+  border: 1px solid #c7c9d2;
+  border-radius: 16px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+}
+
+.sidebar {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+}
+
+.sidebar h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.sidebar .grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px; /* vertical 6px, horizontal 8px */
+  grid-auto-rows: minmax(72px, auto);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  width: 100%;
+  flex: 1;
+  max-height: calc(100% - 44px); /* header + gap reserve */
+}
+
+.sidebar {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  height: 100%;
+}
+
+.sidebar .item {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #f8f9ff;
+  border: 1px solid #c7c9d2;
+  border-radius: 14px;
+  box-sizing: border-box;
+}
+
+.canvas {
+  position: relative;
+  background-color: #fff;
+  background-image:
+    linear-gradient(0deg, #D3C3F9 1px, transparent 1px),
+    linear-gradient(90deg, #D3C3F9 1px, transparent 1px),
+    linear-gradient(0deg, #A38FDC 2px, transparent 2px),
+    linear-gradient(90deg, #A38FDC 2px, transparent 2px);
+  background-size: 20px 20px, 20px 20px, 100px 100px, 100px 100px;
+  background-position: center;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.inspector {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.inspector-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspector h3 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.preview-box {
+  width: 56px;
+  height: 48px;
+  border: 1px solid #c7c9d2;
+  border-radius: 12px;
+  background: #f8f9ff;
+}
+
+.inspect-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inspector label {
+  font-size: 13px;
+  color: #5f637a;
+}
+
+.inspector input {
+  width: 100%;
+  border: 1px solid #c7c9d2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
+.inspector .buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.inspector .buttons button {
+  width: 100%;
+  border: 1px solid #c7c9d2;
+  border-radius: 12px;
+  background: #f8f9ff;
+  font-size: 18px;
+  padding: 8px;
+}
+
+.zoom {
+  margin-top: 8px;
+  width: fit-content;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.zoom button {
+  border: 1px solid #c7c9d2;
+  background: #e8ecff;
+  width: 44px;
+  height: 34px;
+  border-radius: 12px;
+  font-size: 20px;
+  color: #2b2f42;
+  cursor: pointer;
+}
+
+.zoom span {
+  min-width: 60px;
+  text-align: center;
+  font-weight: 700;
+}
