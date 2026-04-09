@@ -136,6 +136,11 @@ body {
   overflow: hidden;
 }
 
+.canvas.dragging-over {
+  border: 2px dashed #007bff;
+  background-color: rgba(0, 123, 255, 0.1);
+}
+
 .inspector {
   padding: 12px;
   display: flex;
