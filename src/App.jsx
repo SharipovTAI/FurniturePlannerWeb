@@ -9,7 +9,7 @@ export default function App() {
   const [canvasObjects, setCanvasObjects] = useState([]);
 
   const addObjectToCanvas = (obj) => {
-    setCanvasObjects(prev => [...prev, { ...obj, id: Date.now(), x: 50, y: 50 }]);
+    setCanvasObjects(prev => [...prev, { ...obj, id: Date.now() }]);
   };
 
   const updateObjectPosition = (id, x, y) => {

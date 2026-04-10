@@ -12,7 +12,30 @@ const furnitureItems = [
 export default function Sidebar() {
   const handleDragStart = (e, item) => {
     e.dataTransfer.setData("application/json", JSON.stringify(item));
+    
+    // Создаем custom drag image с реальным размером объекта
+    const ghost = document.createElement('div');
+    ghost.style.width = `${item.width}px`;
+    ghost.style.height = `${item.height}px`;
+    ghost.style.backgroundColor = item.color;
+    ghost.style.border = '2px solid #333';
+    ghost.style.borderRadius = '4px';
+    ghost.style.display = 'flex';
+    ghost.style.alignItems = 'center';
+    ghost.style.justifyContent = 'center';
+    ghost.style.color = 'white';
+    ghost.style.fontSize = '12px';
+    ghost.style.fontWeight = 'bold';
+    ghost.style.position = 'absolute';
+    ghost.style.top = '-1000px'; // скрываем off-screen
+    ghost.textContent = item.name;
+    document.body.appendChild(ghost);
+
+    e.dataTransfer.setDragImage(ghost, item.width / 2, item.height / 2);
     e.dataTransfer.effectAllowed = "copy";
+
+    // Удаляем ghost после drag
+    setTimeout(() => document.body.removeChild(ghost), 0);
   };
 
   return (

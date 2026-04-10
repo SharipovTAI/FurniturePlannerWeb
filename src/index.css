@@ -141,6 +141,17 @@ body {
   background-color: rgba(0, 123, 255, 0.1);
 }
 
+.canvas-object {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.canvas-object:hover {
+  border-color: #007bff !important;
+}
+
 .inspector {
   padding: 12px;
   display: flex;
