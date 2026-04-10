@@ -10,6 +10,7 @@ export default function Header() {
         <button>→</button>
       </div>
       <button>⋯</button>
+      <button>Войти</button>
       <button className="save">Сохранить</button>
     </div>
   );
