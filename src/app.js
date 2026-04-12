@@ -1,11 +1,15 @@
-// Furniture data
+// Furniture and wall data
 const furnitureItems = [
-  { id: 1, type: "table", name: "Стол", width: 100, height: 60, color: "#8B4513" },
-  { id: 2, type: "chair", name: "Стул", width: 50, height: 50, color: "#654321" },
-  { id: 3, type: "sofa", name: "Диван", width: 150, height: 80, color: "#4169E1" },
-  { id: 4, type: "cabinet", name: "Шкаф", width: 80, height: 120, color: "#8B4513" },
-  { id: 5, type: "bed", name: "Кровать", width: 160, height: 100, color: "#FF6347" },
-  { id: 6, type: "lamp", name: "Лампа", width: 30, height: 60, color: "#FFD700" },
+  { type: 'furniture', subtype: 'table', name: 'Стол', width: 100, height: 60, color: '#8B4513' },
+  { type: 'furniture', subtype: 'chair', name: 'Стул', width: 50, height: 50, color: '#654321' },
+  { type: 'furniture', subtype: 'sofa', name: 'Диван', width: 150, height: 80, color: '#4169E1' },
+  { type: 'furniture', subtype: 'cabinet', name: 'Шкаф', width: 80, height: 120, color: '#8B4513' },
+  { type: 'furniture', subtype: 'bed', name: 'Кровать', width: 160, height: 100, color: '#FF6347' },
+  { type: 'furniture', subtype: 'lamp', name: 'Лампа', width: 30, height: 60, color: '#FFD700' },
+];
+
+const wallItems = [
+  { type: 'wall', subtype: 'standard', name: 'Стена', width: 240, height: 14, color: '#4f4f4f' },
 ];
 
 // App state
@@ -15,13 +19,16 @@ let appState = {
   zoom: 1,
   isDraggingCanvas: false,
   draggingObject: null,
+  rotatingObject: null,
+  rotationStart: null,
   dragOffset: { x: 0, y: 0 },
   previewObject: null,
 };
 
 // DOM Elements
 const canvas = document.getElementById('canvas');
-const sidebarGrid = document.getElementById('sidebar-grid');
+const furnitureGrid = document.getElementById('sidebar-furniture-grid');
+const wallGrid = document.getElementById('sidebar-wall-grid');
 const inspectorTitle = document.getElementById('inspector-title');
 const previewBox = document.getElementById('preview-box');
 const fieldX = document.getElementById('field-x');
@@ -30,6 +37,8 @@ const fieldZ = document.getElementById('field-z');
 const fieldWidth = document.getElementById('field-width');
 const fieldLength = document.getElementById('field-length');
 const fieldHeight = document.getElementById('field-height');
+const fieldAngle = document.getElementById('field-angle');
+const fieldBearing = document.getElementById('field-bearing');
 const saveBtn = document.getElementById('saveBtn');
 const loginBtn = document.getElementById('loginBtn');
 const zoomInBtn = document.getElementById('zoomInBtn');
@@ -50,24 +59,28 @@ function init() {
 
 // ============ SIDEBAR ============
 function renderSidebar() {
-  sidebarGrid.innerHTML = '';
-  furnitureItems.forEach(item => {
-    const el = document.createElement('div');
-    el.className = 'item';
-    el.style.backgroundColor = item.color;
-    el.draggable = true;
-    el.textContent = item.name;
-    
-    el.addEventListener('dragstart', (e) => handleSidebarDragStart(e, item));
-    sidebarGrid.appendChild(el);
-  });
+  furnitureGrid.innerHTML = '';
+  wallGrid.innerHTML = '';
+
+  furnitureItems.forEach(item => furnitureGrid.appendChild(createSidebarItem(item)));
+  wallItems.forEach(item => wallGrid.appendChild(createSidebarItem(item)));
+}
+
+function createSidebarItem(item) {
+  const el = document.createElement('div');
+  el.className = 'item';
+  el.style.backgroundColor = item.color;
+  el.draggable = true;
+  el.textContent = item.name;
+
+  el.addEventListener('dragstart', (e) => handleSidebarDragStart(e, item));
+  return el;
 }
 
 function handleSidebarDragStart(e, item) {
   e.dataTransfer.effectAllowed = 'copy';
   e.dataTransfer.setData('application/json', JSON.stringify(item));
-  
-  // Create custom drag image
+
   const ghost = document.createElement('div');
   ghost.style.width = `${item.width}px`;
   ghost.style.height = `${item.height}px`;
@@ -84,10 +97,43 @@ function handleSidebarDragStart(e, item) {
   ghost.style.top = '-1000px';
   ghost.textContent = item.name;
   document.body.appendChild(ghost);
-  
+
   e.dataTransfer.setDragImage(ghost, item.width / 2, item.height / 2);
-  
   setTimeout(() => document.body.removeChild(ghost), 0);
+}
+
+function createPlacedObject(item, x, y) {
+  const base = {
+    id: Date.now() + Math.random(),
+    x,
+    y,
+    z: appState.canvasObjects.length,
+    visible: true,
+    angle: 0,
+    name: item.name,
+    color: item.color,
+  };
+
+  if (item.type === 'wall') {
+    return {
+      ...base,
+      type: 'wall',
+      subtype: item.subtype,
+      width: item.width,
+      height: item.height,
+      bearing: false,
+      locked: false,
+    };
+  }
+
+  return {
+    ...base,
+    type: 'furniture',
+    subtype: item.subtype,
+    width: item.width,
+    height: item.height,
+    locked: false,
+  };
 }
 
 // ============ CANVAS ============
@@ -104,7 +150,7 @@ function handleCanvasDragOver(e) {
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
   canvas.classList.add('dragging-over');
-  
+
   const data = e.dataTransfer.getData('application/json');
   if (data) {
     const item = JSON.parse(data);
@@ -128,24 +174,15 @@ function handleCanvasDrop(e) {
   e.preventDefault();
   canvas.classList.remove('dragging-over');
   appState.previewObject = null;
-  
+
   const data = e.dataTransfer.getData('application/json');
   if (data) {
     const item = JSON.parse(data);
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
-    const newObject = {
-      ...item,
-      x,
-      y,
-      z: appState.canvasObjects.length,
-      id: Date.now(),
-      visible: true,
-      locked: false,
-    };
-    
+
+    const newObject = createPlacedObject(item, x, y);
     appState.canvasObjects.push(newObject);
     saveToLocalStorage();
     renderCanvas();
@@ -153,43 +190,59 @@ function handleCanvasDrop(e) {
 }
 
 function handleCanvasMouseMove(e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  if (appState.rotatingObject) {
+    const obj = appState.canvasObjects.find(o => o.id === appState.rotatingObject);
+    if (obj && !obj.locked) {
+      const angleToPointer = Math.atan2(y - obj.y, x - obj.x) * 180 / Math.PI;
+      let newAngle = angleToPointer - appState.rotationStart.startAngle + appState.rotationStart.initialAngle;
+      if (e.shiftKey) {
+        newAngle = snapAngle(newAngle, 45);
+      }
+      obj.angle = normalizeAngle(newAngle);
+      updateInspector();
+      renderCanvas();
+    }
+    return;
+  }
+
   if (appState.draggingObject) {
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left - appState.dragOffset.x;
-    const y = e.clientY - rect.top - appState.dragOffset.y;
-    
     const obj = appState.canvasObjects.find(o => o.id === appState.draggingObject);
     if (obj) {
-      obj.x = x;
-      obj.y = y;
+      obj.x = x - appState.dragOffset.x;
+      obj.y = y - appState.dragOffset.y;
       renderCanvas();
     }
   }
 }
 
 function handleCanvasMouseUp() {
-  if (appState.draggingObject) {
+  if (appState.draggingObject || appState.rotatingObject) {
     saveToLocalStorage();
   }
   appState.draggingObject = null;
+  appState.rotatingObject = null;
+  appState.rotationStart = null;
   appState.dragOffset = { x: 0, y: 0 };
 }
 
 function renderCanvas() {
   canvas.innerHTML = '';
-  
-  // Render objects sorted by z-index
+
   const sorted = [...appState.canvasObjects].sort((a, b) => a.z - b.z);
-  
+
   sorted.forEach(obj => {
     const el = document.createElement('div');
-    el.className = 'canvas-object';
+    el.className = `canvas-object ${obj.type === 'wall' ? 'wall' : ''}${obj.type === 'wall' && obj.bearing ? ' wall-bearing' : ''}`;
     el.dataset.id = obj.id;
     el.style.position = 'absolute';
-    el.style.left = (obj.x - obj.width / 2) + 'px';
-    el.style.top = (obj.y - obj.height / 2) + 'px';
-    el.style.width = obj.width + 'px';
-    el.style.height = obj.height + 'px';
+    el.style.left = `${obj.x - obj.width / 2}px`;
+    el.style.top = `${obj.y - obj.height / 2}px`;
+    el.style.width = `${obj.width}px`;
+    el.style.height = `${obj.height}px`;
     el.style.backgroundColor = obj.color;
     el.style.border = '2px solid #333';
     el.style.borderRadius = '4px';
@@ -199,33 +252,45 @@ function renderCanvas() {
     el.style.color = 'white';
     el.style.fontSize = '12px';
     el.style.fontWeight = 'bold';
-    el.style.cursor = appState.draggingObject === obj.id ? 'grabbing' : 'grab';
+    el.style.cursor = obj.locked ? 'not-allowed' : appState.draggingObject === obj.id ? 'grabbing' : 'grab';
     el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
     el.style.zIndex = appState.draggingObject === obj.id ? 10 : obj.z;
     el.style.opacity = obj.visible ? 1 : 0.5;
+    el.style.transform = `rotate(${obj.angle || 0}deg)`;
+    el.style.transformOrigin = 'center center';
     el.textContent = obj.name;
-    
+
     if (appState.selectedObject?.id === obj.id) {
       el.style.border = '3px solid #007bff';
     }
-    
+
     el.addEventListener('mousedown', (e) => handleObjectMouseDown(e, obj));
     el.addEventListener('dblclick', () => deleteObject(obj.id));
-    el.addEventListener('click', () => selectObject(obj));
-    
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectObject(obj);
+    });
+
+    if (appState.selectedObject?.id === obj.id && obj.type === 'wall' && !obj.locked) {
+      const handle = document.createElement('div');
+      handle.className = 'rotate-handle';
+      handle.title = 'Повернуть стену';
+      handle.addEventListener('mousedown', (e) => handleRotateMouseDown(e, obj));
+      el.appendChild(handle);
+    }
+
     canvas.appendChild(el);
   });
-  
-  // Render preview
+
   if (appState.previewObject) {
     const preview = appState.previewObject;
     const el = document.createElement('div');
     el.className = 'canvas-object preview';
     el.style.position = 'absolute';
-    el.style.left = (preview.x - preview.width / 2) + 'px';
-    el.style.top = (preview.y - preview.height / 2) + 'px';
-    el.style.width = preview.width + 'px';
-    el.style.height = preview.height + 'px';
+    el.style.left = `${preview.x - preview.width / 2}px`;
+    el.style.top = `${preview.y - preview.height / 2}px`;
+    el.style.width = `${preview.width}px`;
+    el.style.height = `${preview.height}px`;
     el.style.backgroundColor = preview.color;
     el.style.border = '2px dashed #333';
     el.style.borderRadius = '4px';
@@ -244,16 +309,32 @@ function renderCanvas() {
 
 function handleObjectMouseDown(e, obj) {
   if (obj.locked) return;
-  
+
   e.preventDefault();
   selectObject(obj);
-  
+
   const rect = canvas.getBoundingClientRect();
   const offsetX = e.clientX - rect.left - obj.x;
   const offsetY = e.clientY - rect.top - obj.y;
-  
+
   appState.draggingObject = obj.id;
   appState.dragOffset = { x: offsetX, y: offsetY };
+}
+
+function handleRotateMouseDown(e, obj) {
+  e.stopPropagation();
+  if (obj.locked) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const startAngle = Math.atan2(y - obj.y, x - obj.x) * 180 / Math.PI;
+
+  appState.rotatingObject = obj.id;
+  appState.rotationStart = {
+    startAngle,
+    initialAngle: obj.angle || 0,
+  };
 }
 
 function selectObject(obj) {
@@ -263,6 +344,9 @@ function selectObject(obj) {
 }
 
 function deleteObject(id) {
+  const obj = appState.canvasObjects.find(o => o.id === id);
+  if (obj?.locked) return;
+
   appState.canvasObjects = appState.canvasObjects.filter(o => o.id !== id);
   if (appState.selectedObject?.id === id) {
     appState.selectedObject = null;
@@ -282,19 +366,48 @@ function updateInspector() {
     fieldWidth.value = '';
     fieldLength.value = '';
     fieldHeight.value = '';
+    fieldAngle.value = '';
+    fieldBearing.checked = false;
     previewBox.style.backgroundColor = '#f8f9ff';
+    fieldX.disabled = false;
+    fieldY.disabled = false;
+    fieldZ.disabled = false;
+    fieldWidth.disabled = false;
+    fieldLength.disabled = false;
+    fieldHeight.disabled = false;
+    fieldAngle.disabled = false;
+    fieldBearing.disabled = false;
+    btnDelete.disabled = false;
+    btnVisibility.disabled = false;
+    btnLock.disabled = false;
     return;
   }
   
   const obj = appState.selectedObject;
-  inspectorTitle.textContent = obj.name;
+  const isBearing = obj.type === 'wall' && obj.bearing;
+
+  inspectorTitle.textContent = obj.name + (isBearing ? ' (несущая)' : '');
   fieldX.value = Math.round(obj.x);
   fieldY.value = Math.round(obj.y);
   fieldZ.value = obj.z;
   fieldWidth.value = obj.width;
   fieldLength.value = obj.height;
   fieldHeight.value = 100;
+  fieldAngle.value = obj.angle || 0;
+  fieldBearing.checked = obj.type === 'wall' ? !!obj.bearing : false;
   previewBox.style.backgroundColor = obj.color;
+
+  const editable = !(obj.type === 'wall' && obj.bearing);
+  fieldX.disabled = !editable;
+  fieldY.disabled = !editable;
+  fieldZ.disabled = !editable;
+  fieldWidth.disabled = !editable;
+  fieldLength.disabled = !editable;
+  fieldHeight.disabled = !editable;
+  fieldAngle.disabled = !editable;
+  btnDelete.disabled = !editable;
+  btnVisibility.disabled = !editable;
+  btnLock.disabled = !editable;
 }
 
 // Setup inspector input listeners
@@ -312,6 +425,36 @@ function updateInspector() {
     renderCanvas();
   });
 });
+
+fieldAngle.addEventListener('change', () => {
+  if (!appState.selectedObject) return;
+  if (appState.selectedObject.type === 'wall' && appState.selectedObject.bearing) return;
+  const angle = parseFloat(fieldAngle.value);
+  if (!isNaN(angle)) {
+    appState.selectedObject.angle = normalizeAngle(angle);
+    saveToLocalStorage();
+    renderCanvas();
+  }
+});
+
+fieldBearing.addEventListener('change', () => {
+  if (!appState.selectedObject || appState.selectedObject.type !== 'wall') return;
+  appState.selectedObject.bearing = fieldBearing.checked;
+  appState.selectedObject.locked = fieldBearing.checked;
+  saveToLocalStorage();
+  updateInspector();
+  renderCanvas();
+});
+
+function normalizeAngle(angle) {
+  let result = angle % 360;
+  if (result < 0) result += 360;
+  return result;
+}
+
+function snapAngle(angle, step) {
+  return Math.round(angle / step) * step;
+}
 
 // ============ CONTROLS ============
 function setupControlEventListeners() {

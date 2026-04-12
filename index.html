@@ -29,7 +29,14 @@
                     Меню
                     <span style="font-size: 14px; color: #5f637a;">˅</span>
                 </h3>
-                <div class="grid" id="sidebar-grid"></div>
+                <div class="category">
+                    <h4>Мебель</h4>
+                    <div class="grid" id="sidebar-furniture-grid"></div>
+                </div>
+                <div class="category">
+                    <h4>Стены</h4>
+                    <div class="grid" id="sidebar-wall-grid"></div>
+                </div>
             </div>
 
             <!-- Canvas -->
@@ -70,6 +77,18 @@
                         <div class="field">
                             <label>Высота:</label>
                             <input type="number" id="field-height">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="field">
+                            <label>Угол:</label>
+                            <input type="number" id="field-angle" step="1" min="0" max="359">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="field" style="grid-column: span 3; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="field-bearing">
+                            <label for="field-bearing">Несущая стена</label>
                         </div>
                     </div>
                 </div>
