@@ -10,7 +10,6 @@ class CustomFurnitureObject(models.Model):
     description = models.TextField(blank=True, null=True)
     width = models.FloatField(validators=[MinValueValidator(0.1)])
     height = models.FloatField(validators=[MinValueValidator(0.1)])
-    length = models.FloatField(validators=[MinValueValidator(0.1)])
     color = models.CharField(max_length=7, default='#888888')  # Hex color code
     file_path = models.FileField(upload_to='furniture_objects/', null=True, blank=True)  # For 3D models or SVG
     created_at = models.DateTimeField(auto_now_add=True)
@@ -82,28 +81,12 @@ class FurnitureItem(models.Model):
     z_index = models.IntegerField(default=0)
     width = models.FloatField(default=50)
     height = models.FloatField(default=50)
-    length = models.FloatField(default=50)
     angle = models.FloatField(default=0, validators=[MinValueValidator(0), MaxValueValidator(359)])
     color = models.CharField(max_length=7, default='#888888')
     visible = models.BooleanField(default=True)
     locked = models.BooleanField(default=False)
+    comment = models.TextField(blank=True, null=True)  # Текстовая аннотация
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.project.name} - {self.name}"
-
-
-class ObjectBinding(models.Model):
-    """Represents binding of furniture items to walls"""
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='bindings')
-    furniture_item = models.ForeignKey(FurnitureItem, on_delete=models.CASCADE, related_name='bindings')
-    wall = models.ForeignKey(Wall, on_delete=models.CASCADE, related_name='bound_items')
-    offset_x = models.FloatField(default=0)  # Distance from wall start
-    offset_y = models.FloatField(default=0)  # Distance perpendicular to wall
-    distance_from_start = models.FloatField(default=0)  # Distance along the wall
-
-    def __str__(self):
-        return f"{self.furniture_item.name} bound to {self.wall.name}"
-
-    class Meta:
-        unique_together = ['furniture_item', 'wall']

@@ -26,21 +26,21 @@
             <!-- Sidebar -->
             <div class="sidebar">
                 <h3>
-                    Menu
+                    Меню
                     <span style="font-size: 14px; color: #5f637a;">˅</span>
                 </h3>
                 <div class="category">
-                    <h4>Furniture</h4>
+                    <h4>Мебель</h4>
                     <div class="grid" id="sidebar-furniture-grid"></div>
                 </div>
                 <div class="category">
-                    <h4>Walls</h4>
+                    <h4>Стены</h4>
                     <div class="grid" id="sidebar-wall-grid"></div>
                 </div>
                 <div class="category">
-                    <h4>Custom Objects</h4>
+                    <h4>Свои объекты</h4>
                     <div class="grid" id="sidebar-custom-grid"></div>
-                    <button id="uploadCustomBtn" class="upload-btn">+ Upload Custom Object</button>
+                    <button id="uploadCustomBtn" class="upload-btn">+ Загрузить свой объект</button>
                 </div>
             </div>
 
@@ -50,7 +50,7 @@
             <!-- Inspector -->
             <div class="inspector">
                 <div class="inspector-header">
-                    <h3 id="inspector-title">Select an object</h3>
+                    <h3 id="inspector-title">Выбрать объект</h3>
                     <div class="preview-box" id="preview-box"></div>
                 </div>
 
@@ -72,51 +72,41 @@
 
                     <div class="row">
                         <div class="field">
-                            <label>Width:</label>
+                            <label>Ширина:</label>
                             <input type="number" id="field-width">
                         </div>
                         <div class="field">
-                            <label>Length:</label>
-                            <input type="number" id="field-length">
-                        </div>
-                        <div class="field">
-                            <label>Height:</label>
+                            <label>Высота:</label>
                             <input type="number" id="field-height">
                         </div>
-                    </div>
-                    <div class="row">
                         <div class="field">
-                            <label>Angle:</label>
+                            <label>Угол:</label>
                             <input type="number" id="field-angle" step="1" min="0" max="359">
                         </div>
                     </div>
 
                     <div class="row">
-                        <div class="field" style="grid-column: span 3; display: flex; align-items: center; gap: 8px;">
+                        <div class="field">
                             <input type="checkbox" id="field-bearing">
-                            <label for="field-bearing">Bearing Wall</label>
+                            <label for="field-bearing">Несущая стена</label>
                         </div>
-                    </div>
 
-                    <div class="row">
-                        <div class="field" style="grid-column: span 3; display: flex; align-items: center; gap: 8px;">
+                        <div class="field">
                             <input type="checkbox" id="field-visible" checked>
-                            <label for="field-visible">Visible</label>
+                            <label for="field-visible">Видимый</label>
                         </div>
-                    </div>
 
-                    <div class="row">
-                        <div class="field" style="grid-column: span 3; display: flex; align-items: center; gap: 8px;">
+                        <div class="field">
                             <input type="checkbox" id="field-locked">
                             <label for="field-locked">Locked</label>
                         </div>
                     </div>
 
                     <div class="row">
-                        <label>Bind to Wall:</label>
-                        <select id="field-bind-wall">
-                            <option value="">None</option>
-                        </select>
+                        <div class="field">
+                            <label>Комментарии:</label>
+                            <textarea id="field-comment" rows="3" style="width: 330%; resize: vertical;"></textarea>
+                        </div>
                     </div>
                 </div>
 
@@ -162,7 +152,6 @@
                 <input type="text" id="uploadDesc" placeholder="Description">
                 <input type="number" id="uploadWidth" placeholder="Width" required>
                 <input type="number" id="uploadHeight" placeholder="Height" required>
-                <input type="number" id="uploadLength" placeholder="Length" required>
                 <input type="color" id="uploadColor" value="#888888">
                 <input type="file" id="uploadFile" accept=".svg,.obj,.png,.jpg">
                 <button type="submit">Upload</button>

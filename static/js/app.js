@@ -1,21 +1,23 @@
 // Configuration
 const API_URL = '/api';
+const SNAP_DISTANCE = 15; // Distance in pixels for magnetic snapping
+const SNAP_LINE_COLOR = '#FF6B6B'; // Color of snap indication lines
 let authToken = localStorage.getItem('authToken');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let currentProjectId = localStorage.getItem('currentProjectId');
 
 // Furniture and wall data
 const furnitureItems = [
-  { type: 'furniture', subtype: 'table', name: 'Table', width: 100, height: 60, length: 100, color: '#8B4513' },
-  { type: 'furniture', subtype: 'chair', name: 'Chair', width: 50, height: 50, length: 50, color: '#654321' },
-  { type: 'furniture', subtype: 'sofa', name: 'Sofa', width: 150, height: 80, length: 150, color: '#4169E1' },
-  { type: 'furniture', subtype: 'cabinet', name: 'Cabinet', width: 80, height: 120, length: 80, color: '#8B4513' },
-  { type: 'furniture', subtype: 'bed', name: 'Bed', width: 160, height: 100, length: 160, color: '#FF6347' },
-  { type: 'furniture', subtype: 'lamp', name: 'Lamp', width: 30, height: 60, length: 30, color: '#FFD700' },
+  { type: 'furniture', subtype: 'table', name: 'Table', width: 100, height: 100, color: '#8B4513' },
+  { type: 'furniture', subtype: 'chair', name: 'Chair', width: 50, height: 50, color: '#654321' },
+  { type: 'furniture', subtype: 'sofa', name: 'Sofa', width: 150, height: 150, color: '#4169E1' },
+  { type: 'furniture', subtype: 'cabinet', name: 'Cabinet', width: 80, height: 80, color: '#8B4513' },
+  { type: 'furniture', subtype: 'bed', name: 'Bed', width: 160, height: 160, color: '#FF6347' },
+  { type: 'furniture', subtype: 'lamp', name: 'Lamp', width: 30, height: 30, color: '#FFD700' },
 ];
 
 const wallItems = [
-  { type: 'wall', subtype: 'standard', name: 'Wall', width: 240, height: 14, length: 240, color: '#4f4f4f' },
+  { type: 'wall', subtype: 'standard', name: 'Wall', width: 240, height: 12, color: '#4f4f4f' },
 ];
 
 // App state
@@ -32,7 +34,7 @@ let appState = {
   previewObject: null,
   projectName: 'Untitled Project',
   walls: [],
-  bindings: {},
+  detectedRooms: [],
 };
 
 // Modal state
@@ -146,7 +148,7 @@ async function saveProject() {
 
     let projectId;
     if (currentProjectId) {
-      await fetch(`${API_URL}/projects/${currentProjectId}/`, {
+      const updateResponse = await fetch(`${API_URL}/projects/${currentProjectId}/`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -154,6 +156,10 @@ async function saveProject() {
         },
         body: JSON.stringify(projectData),
       });
+      
+      if (!updateResponse.ok) {
+        throw new Error(`Failed to update project: ${updateResponse.status}`);
+      }
       projectId = currentProjectId;
     } else {
       const response = await fetch(`${API_URL}/projects/`, {
@@ -165,11 +171,23 @@ async function saveProject() {
         body: JSON.stringify(projectData),
       });
 
-      if (!response.ok) throw new Error('Failed to create project');
+      if (!response.ok) throw new Error(`Failed to create project: ${response.status}`);
       const result = await response.json();
       projectId = result.id;
       currentProjectId = projectId;
       localStorage.setItem('currentProjectId', projectId);
+    }
+
+    // First, delete existing furniture items and walls for this project
+    try {
+      await fetch(`${API_URL}/projects/${projectId}/furniture_items/?delete_all=true`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Token ${authToken}`,
+        },
+      });
+    } catch (e) {
+      // Ignore if endpoint doesn't exist
     }
 
     // Save furniture items
@@ -183,18 +201,18 @@ async function saveProject() {
         z_index: obj.z,
         width: obj.width,
         height: obj.height,
-        length: obj.length || obj.height,
         angle: obj.angle || 0,
         color: obj.color,
         visible: obj.visible !== false,
         locked: obj.locked || false,
+        comment: obj.comment || '',
       };
 
       if (obj.customId) {
         itemData.custom_object = obj.customId;
       }
 
-      await fetch(`${API_URL}/projects/${projectId}/furniture_items/`, {
+      const itemResponse = await fetch(`${API_URL}/projects/${projectId}/furniture_items/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -202,35 +220,11 @@ async function saveProject() {
         },
         body: JSON.stringify(itemData),
       });
-    }
-
-    // Save walls
-    for (const wall of appState.walls) {
-      await fetch(`${API_URL}/projects/${projectId}/walls/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`,
-        },
-        body: JSON.stringify(wall),
-      });
-    }
-
-    // Save bindings
-    for (const itemId in appState.bindings) {
-      const wallId = appState.bindings[itemId];
-      if (wallId) {
-        await fetch(`${API_URL}/projects/${projectId}/bindings/`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Token ${authToken}`,
-          },
-          body: JSON.stringify({
-            furniture_item: itemId,
-            wall: wallId,
-          }),
-        });
+      
+      if (!itemResponse.ok) {
+        const errorText = await itemResponse.text();
+        console.error('Failed to save item:', itemData, 'Response:', errorText);
+        throw new Error(`Failed to save furniture item: ${itemResponse.status}`);
       }
     }
 
@@ -239,6 +233,7 @@ async function saveProject() {
     console.error('Error saving project:', error);
     alert('Error saving project: ' + error.message);
   }
+
 }
 
 async function downloadProject() {
@@ -301,11 +296,11 @@ async function loadProject(projectId) {
         z: item.z_index,
         width: item.width,
         height: item.height,
-        length: item.length,
         angle: item.angle,
         color: item.color,
         visible: item.visible,
         locked: item.locked,
+        comment: item.comment || '',
         customId: item.custom_object?.id,
       });
     }
@@ -313,11 +308,6 @@ async function loadProject(projectId) {
     // Load walls
     for (const wall of project.walls) {
       appState.walls.push(wall);
-    }
-
-    // Load bindings
-    for (const binding of project.bindings) {
-      appState.bindings[binding.furniture_item] = binding.wall;
     }
 
     saveToLocalStorage();
@@ -354,7 +344,6 @@ async function setupCustomObjectUI() {
     const desc = document.getElementById('uploadDesc').value;
     const width = parseFloat(document.getElementById('uploadWidth').value);
     const height = parseFloat(document.getElementById('uploadHeight').value);
-    const length = parseFloat(document.getElementById('uploadLength').value);
     const color = document.getElementById('uploadColor').value;
     const file = document.getElementById('uploadFile').files[0];
 
@@ -364,7 +353,6 @@ async function setupCustomObjectUI() {
       formData.append('description', desc);
       formData.append('width', width);
       formData.append('height', height);
-      formData.append('length', length);
       formData.append('color', color);
       if (file) formData.append('file_path', file);
 
@@ -434,7 +422,6 @@ function renderSidebar() {
       name: item.name,
       width: item.width,
       height: item.height,
-      length: item.length,
       color: item.color,
       customId: item.id,
     };
@@ -457,12 +444,10 @@ function createSidebarItem(item) {
 function normalizeObjectDimensions(item) {
   const width = Number(item.width) || 50;
   const height = Number(item.height) || 50;
-  const length = Number(item.length) || height;
 
   return {
     width,
     height,
-    length,
   };
 }
 
@@ -479,7 +464,7 @@ function handleSidebarDragStart(e, item) {
   dragPreview.style.top = '-10000px';
   dragPreview.style.left = '-10000px';
   dragPreview.style.width = `${dimensions.width}px`;
-  dragPreview.style.height = `${dimensions.length}px`;
+  dragPreview.style.height = `${dimensions.height}px`;
   dragPreview.style.backgroundColor = item.color;
   dragPreview.style.border = '2px solid #333';
   dragPreview.style.borderRadius = '4px';
@@ -492,7 +477,7 @@ function handleSidebarDragStart(e, item) {
   dragPreview.style.padding = '4px';
   dragPreview.textContent = item.name;
   document.body.appendChild(dragPreview);
-  e.dataTransfer.setDragImage(dragPreview, dimensions.width / 2, dimensions.length / 2);
+  e.dataTransfer.setDragImage(dragPreview, dimensions.width / 2, dimensions.height / 2);
   e.target._dragPreviewEl = dragPreview;
 }
 
@@ -567,7 +552,6 @@ function handleCanvasDrop(e) {
       subtype: item.subtype,
       width: dimensions.width,
       height: dimensions.height,
-      length: dimensions.length,
       locked: false,
       customId: item.customId,
     };
@@ -608,6 +592,44 @@ function handleCanvasMouseMove(e) {
     if (obj) {
       obj.x = x - appState.dragOffset.x;
       obj.y = y - appState.dragOffset.y;
+
+      // Apply magnetic snapping (walls snap to wall endpoints, furniture snaps normally)
+      if (obj.type === 'wall') {
+        const snap = checkWallSnapping(obj);
+        if (snap.snapX !== null || snap.snapY !== null) {
+          // Calculate endpoints of the wall
+          const wallStart = {
+            x: obj.x - obj.width / 2 * Math.cos(obj.angle * Math.PI / 180),
+            y: obj.y - obj.width / 2 * Math.sin(obj.angle * Math.PI / 180)
+          };
+          
+          const wallEnd = {
+            x: obj.x + obj.width / 2 * Math.cos(obj.angle * Math.PI / 180),
+            y: obj.y + obj.width / 2 * Math.sin(obj.angle * Math.PI / 180)
+          };
+          
+          // Determine which endpoint is closer to snap point
+          const distStart = Math.sqrt(Math.pow(wallStart.x - (snap.snapX || obj.x), 2) + Math.pow(wallStart.y - (snap.snapY || obj.y), 2));
+          const distEnd = Math.sqrt(Math.pow(wallEnd.x - (snap.snapX || obj.x), 2) + Math.pow(wallEnd.y - (snap.snapY || obj.y), 2));
+          
+          const targetPoint = { x: snap.snapX || obj.x, y: snap.snapY || obj.y };
+          const snapPoint = distStart < distEnd ? wallStart : wallEnd;
+          
+          // Move center so that endpoint aligns with target
+          obj.x += targetPoint.x - snapPoint.x;
+          obj.y += targetPoint.y - snapPoint.y;
+        }
+      } else {
+        // Furniture snaps normally
+        const snap = checkSnapping(obj);
+        if (snap.snapX !== null) {
+          obj.x = snap.snapX;
+        }
+        if (snap.snapY !== null) {
+          obj.y = snap.snapY;
+        }
+      }
+
       renderCanvas();
     }
   }
@@ -623,9 +645,289 @@ function handleCanvasMouseUp() {
   appState.dragOffset = { x: 0, y: 0 };
 }
 
+// =============== MAGNETIC SNAPPING ===============
+function getObjectBounds(obj) {
+  const halfWidth = obj.width / 2;
+  const halfHeight = obj.height / 2;
+  return {
+    left: obj.x - halfWidth,
+    right: obj.x + halfWidth,
+    top: obj.y - halfHeight,
+    bottom: obj.y + halfHeight,
+    centerX: obj.x,
+    centerY: obj.y
+  };
+}
+
+function checkSnapping(draggedObj) {
+  const draggedBounds = getObjectBounds(draggedObj);
+  let snapX = null;
+  let snapY = null;
+  let minDistX = SNAP_DISTANCE;
+  let minDistY = SNAP_DISTANCE;
+
+  // Check all other objects for snapping
+  for (const otherObj of appState.canvasObjects) {
+    if (otherObj.id === draggedObj.id) continue;
+    if (otherObj.locked) continue;
+
+    const otherBounds = getObjectBounds(otherObj);
+
+    // Horizontal snapping
+    // Left edge to right edge
+    const distLeftRight = draggedBounds.left - otherBounds.right;
+    if (Math.abs(distLeftRight) < minDistX) {
+      minDistX = Math.abs(distLeftRight);
+      snapX = otherBounds.right + draggedObj.width / 2;
+    }
+
+    // Right edge to left edge
+    const distRightLeft = draggedBounds.right - otherBounds.left;
+    if (Math.abs(distRightLeft) < minDistX) {
+      minDistX = Math.abs(distRightLeft);
+      snapX = otherBounds.left - draggedObj.width / 2;
+    }
+
+    // Center to center
+    const distCenterX = draggedBounds.centerX - otherBounds.centerX;
+    if (Math.abs(distCenterX) < minDistX) {
+      minDistX = Math.abs(distCenterX);
+      snapX = otherBounds.centerX;
+    }
+
+    // Vertical snapping
+    // Top edge to bottom edge
+    const distTopBottom = draggedBounds.top - otherBounds.bottom;
+    if (Math.abs(distTopBottom) < minDistY) {
+      minDistY = Math.abs(distTopBottom);
+      snapY = otherBounds.bottom + draggedObj.height / 2;
+    }
+
+    // Bottom edge to top edge
+    const distBottomTop = draggedBounds.bottom - otherBounds.top;
+    if (Math.abs(distBottomTop) < minDistY) {
+      minDistY = Math.abs(distBottomTop);
+      snapY = otherBounds.top - draggedObj.height / 2;
+    }
+
+    // Center to center
+    const distCenterY = draggedBounds.centerY - otherBounds.centerY;
+    if (Math.abs(distCenterY) < minDistY) {
+      minDistY = Math.abs(distCenterY);
+      snapY = otherBounds.centerY;
+    }
+  }
+
+  return { snapX, snapY };
+}
+
+// =============== WALL SNAPPING ===============
+function checkWallSnapping(draggedWall) {
+  const WALL_SNAP_DISTANCE = 20; // Larger snap distance for wall endpoints
+  let snapX = null;
+  let snapY = null;
+  
+  // Get endpoints of dragged wall
+  const draggedStart = {
+    x: draggedWall.x - draggedWall.width / 2 * Math.cos(draggedWall.angle * Math.PI / 180),
+    y: draggedWall.y - draggedWall.width / 2 * Math.sin(draggedWall.angle * Math.PI / 180)
+  };
+  
+  const draggedEnd = {
+    x: draggedWall.x + draggedWall.width / 2 * Math.cos(draggedWall.angle * Math.PI / 180),
+    y: draggedWall.y + draggedWall.width / 2 * Math.sin(draggedWall.angle * Math.PI / 180)
+  };
+  
+  // Check other walls
+  const otherWalls = appState.canvasObjects.filter(obj => obj.type === 'wall' && obj.id !== draggedWall.id);
+  
+  let minDistStart = WALL_SNAP_DISTANCE;
+  let minDistEnd = WALL_SNAP_DISTANCE;
+  
+  for (const wall of otherWalls) {
+    const wallStart = {
+      x: wall.x - wall.width / 2 * Math.cos(wall.angle * Math.PI / 180),
+      y: wall.y - wall.width / 2 * Math.sin(wall.angle * Math.PI / 180)
+    };
+    
+    const wallEnd = {
+      x: wall.x + wall.width / 2 * Math.cos(wall.angle * Math.PI / 180),
+      y: wall.y + wall.width / 2 * Math.sin(wall.angle * Math.PI / 180)
+    };
+    
+    // Check dragged wall start against other wall endpoints
+    const distToStart = Math.sqrt(Math.pow(draggedStart.x - wallStart.x, 2) + Math.pow(draggedStart.y - wallStart.y, 2));
+    if (distToStart < minDistStart) {
+      minDistStart = distToStart;
+      snapX = wallStart.x;
+      snapY = wallStart.y;
+    }
+    
+    const distToEnd = Math.sqrt(Math.pow(draggedStart.x - wallEnd.x, 2) + Math.pow(draggedStart.y - wallEnd.y, 2));
+    if (distToEnd < minDistStart) {
+      minDistStart = distToEnd;
+      snapX = wallEnd.x;
+      snapY = wallEnd.y;
+    }
+    
+    // Check dragged wall end against other wall endpoints
+    const distEndToStart = Math.sqrt(Math.pow(draggedEnd.x - wallStart.x, 2) + Math.pow(draggedEnd.y - wallStart.y, 2));
+    if (distEndToStart < minDistEnd) {
+      minDistEnd = distEndToStart;
+      snapX = wallStart.x;
+      snapY = wallStart.y;
+    }
+    
+    const distEndToEnd = Math.sqrt(Math.pow(draggedEnd.x - wallEnd.x, 2) + Math.pow(draggedEnd.y - wallEnd.y, 2));
+    if (distEndToEnd < minDistEnd) {
+      minDistEnd = distEndToEnd;
+      snapX = wallEnd.x;
+      snapY = wallEnd.y;
+    }
+  }
+  
+  return { snapX, snapY };
+}
+
+// =============== ROOM DETECTION ===============
+function detectRooms() {
+  const rooms = [];
+  const walls = appState.canvasObjects.filter(obj => obj.type === 'wall');
+  
+  if (walls.length === 0) return rooms;
+
+  // Check if walls form a closed polygon by verifying connectivity
+  // For each wall, check if its ends connect to other walls
+  const visited = new Set();
+  
+  for (let i = 0; i < walls.length; i++) {
+    if (visited.has(walls[i].id)) continue;
+    
+    // Start tracing from this wall
+    const chain = [];
+    let currentWall = walls[i];
+    let chainVisited = new Set();
+    
+    while (currentWall && !chainVisited.has(currentWall.id)) {
+      chain.push(currentWall);
+      chainVisited.add(currentWall.id);
+      
+      // Find next connected wall
+      const wallEnd = {
+        x: currentWall.x + currentWall.width / 2 * Math.cos(currentWall.angle * Math.PI / 180),
+        y: currentWall.y + currentWall.width / 2 * Math.sin(currentWall.angle * Math.PI / 180)
+      };
+      
+      let found = false;
+      for (const wall of walls) {
+        if (chainVisited.has(wall.id)) continue;
+        
+        const wallStart = {
+          x: wall.x - wall.width / 2 * Math.cos(wall.angle * Math.PI / 180),
+          y: wall.y - wall.width / 2 * Math.sin(wall.angle * Math.PI / 180)
+        };
+        
+        const dist = Math.sqrt(Math.pow(wallEnd.x - wallStart.x, 2) + Math.pow(wallEnd.y - wallStart.y, 2));
+        
+        if (dist < 5) {
+          currentWall = wall;
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) break;
+    }
+    
+    // Check if chain is closed (ends connect)
+    if (chain.length > 2) {
+      const firstWallStart = {
+        x: chain[0].x - chain[0].width / 2 * Math.cos(chain[0].angle * Math.PI / 180),
+        y: chain[0].y - chain[0].width / 2 * Math.sin(chain[0].angle * Math.PI / 180)
+      };
+      
+      const lastWallEnd = {
+        x: chain[chain.length - 1].x + chain[chain.length - 1].width / 2 * Math.cos(chain[chain.length - 1].angle * Math.PI / 180),
+        y: chain[chain.length - 1].y + chain[chain.length - 1].width / 2 * Math.sin(chain[chain.length - 1].angle * Math.PI / 180)
+      };
+      
+      const closingDist = Math.sqrt(Math.pow(firstWallStart.x - lastWallEnd.x, 2) + Math.pow(firstWallStart.y - lastWallEnd.y, 2));
+      
+      if (closingDist < 5) {
+        // This is a closed room
+        const roomBounds = calculateRoomBounds(chain);
+        rooms.push({
+          walls: chain,
+          bounds: roomBounds,
+          area: calculatePolygonArea(roomBounds)
+        });
+        
+        chain.forEach(wall => visited.add(wall.id));
+      }
+    }
+  }
+  
+  appState.detectedRooms = rooms;
+  return rooms;
+}
+
+function calculateRoomBounds(walls) {
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  
+  walls.forEach(wall => {
+    const halfW = wall.width / 2 * Math.cos(wall.angle * Math.PI / 180);
+    const halfH = wall.width / 2 * Math.sin(wall.angle * Math.PI / 180);
+    
+    minX = Math.min(minX, wall.x - halfW, wall.x + halfW);
+    maxX = Math.max(maxX, wall.x - halfW, wall.x + halfW);
+    minY = Math.min(minY, wall.y - halfH, wall.y + halfH);
+    maxY = Math.max(maxY, wall.y - halfH, wall.y + halfH);
+  });
+  
+  return { minX, maxX, minY, maxY };
+}
+
+function calculatePolygonArea(bounds) {
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  return width * height;
+}
+
 function renderCanvas() {
   const canvas = document.getElementById('canvas');
   canvas.innerHTML = '';
+
+  // Detect rooms
+  detectRooms();
+
+  // Draw detected rooms as background
+  if (appState.detectedRooms && appState.detectedRooms.length > 0) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.style.position = 'absolute';
+    svg.style.top = '0';
+    svg.style.left = '0';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    svg.style.pointerEvents = 'none';
+    
+    appState.detectedRooms.forEach((room, index) => {
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      const colors = ['#949494', '#e3f2fd', '#fff3e0', '#fce4ec', '#f3e5f5'];
+      rect.setAttribute('x', room.bounds.minX);
+      rect.setAttribute('y', room.bounds.minY);
+      rect.setAttribute('width', room.bounds.maxX - room.bounds.minX);
+      rect.setAttribute('height', room.bounds.maxY - room.bounds.minY);
+      rect.setAttribute('fill', colors[index % colors.length]);
+      rect.setAttribute('fill-opacity', '0.3');
+      rect.setAttribute('stroke', '#999');
+      rect.setAttribute('stroke-width', '2');
+      rect.setAttribute('stroke-dasharray', '5,5');
+      svg.appendChild(rect);
+    });
+    
+    canvas.appendChild(svg);
+  }
 
   const sorted = [...appState.canvasObjects].sort((a, b) => a.z - b.z);
 
@@ -635,9 +937,9 @@ function renderCanvas() {
     el.dataset.id = obj.id;
     el.style.position = 'absolute';
     el.style.left = `${obj.x - obj.width / 2}px`;
-    el.style.top = `${obj.y - obj.length / 2}px`;
+    el.style.top = `${obj.y - obj.height / 2}px`;
     el.style.width = `${obj.width}px`;
-    el.style.height = `${obj.length}px`;
+    el.style.height = `${obj.height}px`;
     el.style.backgroundColor = obj.color;
     el.style.border = '2px solid #333';
     el.style.borderRadius = '4px';
@@ -748,9 +1050,6 @@ function deleteObject(id) {
   if (appState.selectedObject?.id === id) {
     appState.selectedObject = null;
   }
-  if (appState.bindings[id]) {
-    delete appState.bindings[id];
-  }
   saveToLocalStorage();
   renderCanvas();
   updateInspector();
@@ -763,13 +1062,12 @@ function updateInspector() {
   const fieldY = document.getElementById('field-y');
   const fieldZ = document.getElementById('field-z');
   const fieldWidth = document.getElementById('field-width');
-  const fieldLength = document.getElementById('field-length');
   const fieldHeight = document.getElementById('field-height');
   const fieldAngle = document.getElementById('field-angle');
   const fieldBearing = document.getElementById('field-bearing');
   const fieldVisible = document.getElementById('field-visible');
   const fieldLocked = document.getElementById('field-locked');
-  const fieldBindWall = document.getElementById('field-bind-wall');
+  const fieldComment = document.getElementById('field-comment');
   const previewBox = document.getElementById('preview-box');
   const btnDelete = document.getElementById('btn-delete');
   const btnVisibility = document.getElementById('btn-visibility');
@@ -781,25 +1079,24 @@ function updateInspector() {
     fieldY.value = '';
     fieldZ.value = '';
     fieldWidth.value = '';
-    fieldLength.value = '';
     fieldHeight.value = '';
     fieldAngle.value = '';
     fieldBearing.checked = false;
     fieldVisible.checked = true;
     fieldLocked.checked = false;
-    fieldBindWall.value = '';
+    fieldComment.value = '';
     previewBox.style.backgroundColor = '#f8f9ff';
     fieldX.disabled = true;
     fieldY.disabled = true;
     fieldZ.disabled = true;
     fieldWidth.disabled = true;
-    fieldLength.disabled = true;
     fieldHeight.disabled = true;
     fieldAngle.disabled = true;
     fieldBearing.disabled = true;
     fieldVisible.disabled = true;
     fieldLocked.disabled = true;
-    fieldBindWall.disabled = true;
+    fieldComment.disabled = true;
+
     btnDelete.disabled = true;
     btnVisibility.disabled = true;
     btnLock.disabled = true;
@@ -813,38 +1110,27 @@ function updateInspector() {
   fieldY.value = Math.round(obj.y);
   fieldZ.value = obj.z;
   fieldWidth.value = obj.width;
-  fieldLength.value = obj.length || obj.height;
   fieldHeight.value = obj.height;
   fieldAngle.value = Math.round(obj.angle || 0);
   fieldBearing.checked = obj.bearing || false;
   fieldVisible.checked = obj.visible !== false;
   fieldLocked.checked = obj.locked || false;
-  fieldBindWall.value = appState.bindings[obj.id] || '';
+  fieldComment.value = obj.comment || '';
   previewBox.style.backgroundColor = obj.color;
   
   fieldX.disabled = false;
   fieldY.disabled = false;
   fieldZ.disabled = obj.type === 'wall';
   fieldWidth.disabled = false;
-  fieldLength.disabled = false;
   fieldHeight.disabled = false;
   fieldAngle.disabled = false;
   fieldBearing.disabled = obj.type !== 'wall';
   fieldVisible.disabled = false;
   fieldLocked.disabled = false;
-  fieldBindWall.disabled = false;
+  fieldComment.disabled = false;
   btnDelete.disabled = false;
   btnVisibility.disabled = false;
   btnLock.disabled = false;
-
-  // Update wall options
-  fieldBindWall.innerHTML = '<option value="">None</option>';
-  appState.canvasObjects.filter(o => o.type === 'wall').forEach(wall => {
-    const option = document.createElement('option');
-    option.value = wall.id;
-    option.textContent = wall.name;
-    fieldBindWall.appendChild(option);
-  });
 }
 
 function setupInspectorEventListeners() {
@@ -852,13 +1138,12 @@ function setupInspectorEventListeners() {
   const fieldY = document.getElementById('field-y');
   const fieldZ = document.getElementById('field-z');
   const fieldWidth = document.getElementById('field-width');
-  const fieldLength = document.getElementById('field-length');
   const fieldHeight = document.getElementById('field-height');
   const fieldAngle = document.getElementById('field-angle');
   const fieldBearing = document.getElementById('field-bearing');
   const fieldVisible = document.getElementById('field-visible');
   const fieldLocked = document.getElementById('field-locked');
-  const fieldBindWall = document.getElementById('field-bind-wall');
+  const fieldComment = document.getElementById('field-comment');
   const btnDelete = document.getElementById('btn-delete');
   const btnVisibility = document.getElementById('btn-visibility');
   const btnLock = document.getElementById('btn-lock');
@@ -875,12 +1160,11 @@ function setupInspectorEventListeners() {
         case 'z': obj.z = parseInt(fieldZ.value) || obj.z; break;
         case 'width': obj.width = parseFloat(fieldWidth.value) || obj.width; break;
         case 'height': obj.height = parseFloat(fieldHeight.value) || obj.height; break;
-        case 'length': obj.length = parseFloat(fieldLength.value) || obj.length; break;
         case 'angle': obj.angle = parseInt(fieldAngle.value) || 0; break;
         case 'bearing': obj.bearing = fieldBearing.checked; break;
         case 'visible': obj.visible = fieldVisible.checked; break;
         case 'locked': obj.locked = fieldLocked.checked; break;
-        case 'bind': appState.bindings[obj.id] = fieldBindWall.value || null; break;
+        case 'comment': obj.comment = fieldComment.value; break;
       }
 
       saveToLocalStorage();
@@ -888,14 +1172,14 @@ function setupInspectorEventListeners() {
     };
   };
 
-  [fieldX, fieldY, fieldZ, fieldWidth, fieldLength, fieldHeight, fieldAngle].forEach(field => {
+  [fieldX, fieldY, fieldZ, fieldWidth, fieldHeight, fieldAngle].forEach(field => {
     field.addEventListener('change', updateField(field.id.split('-')[1]));
   });
 
   fieldBearing.addEventListener('change', updateField('bearing'));
   fieldVisible.addEventListener('change', updateField('visible'));
   fieldLocked.addEventListener('change', updateField('locked'));
-  fieldBindWall.addEventListener('change', updateField('bind'));
+  fieldComment.addEventListener('change', updateField('comment'));
 
   btnDelete.addEventListener('click', () => {
     if (appState.selectedObject) {
@@ -958,7 +1242,6 @@ function snapAngle(angle, snap) {
 function saveToLocalStorage() {
   localStorage.setItem('canvasObjects', JSON.stringify(appState.canvasObjects));
   localStorage.setItem('projectName', appState.projectName);
-  localStorage.setItem('bindings', JSON.stringify(appState.bindings));
 }
 
 function loadFromLocalStorage() {
@@ -970,9 +1253,6 @@ function loadFromLocalStorage() {
     appState.projectName = projectName;
     document.getElementById('projectName').value = projectName;
   }
-
-  const bindings = localStorage.getItem('bindings');
-  if (bindings) appState.bindings = JSON.parse(bindings);
 }
 
 // =============== EVENT SETUP ===============

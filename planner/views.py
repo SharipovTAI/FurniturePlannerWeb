@@ -7,10 +7,10 @@ from django.http import HttpResponse
 import json
 from datetime import datetime
 
-from .models import CustomFurnitureObject, Project, Wall, FurnitureItem, ObjectBinding
+from .models import CustomFurnitureObject, Project, Wall, FurnitureItem
 from .serializers import (
     CustomFurnitureObjectSerializer, ProjectDetailSerializer, ProjectListSerializer,
-    WallSerializer, FurnitureItemSerializer, ObjectBindingSerializer
+    WallSerializer, FurnitureItemSerializer
 )
 
 
@@ -78,7 +78,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
             'updated_at': project.updated_at.isoformat(),
             'walls': [],
             'furniture_items': [],
-            'bindings': []
         }
         
         # Add walls
@@ -109,22 +108,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'z_index': item.z_index,
                 'width': item.width,
                 'height': item.height,
-                'length': item.length,
                 'angle': item.angle,
                 'color': item.color,
                 'visible': item.visible,
                 'locked': item.locked,
-            })
-        
-        # Add bindings
-        for binding in project.bindings.all():
-            project_data['bindings'].append({
-                'id': binding.id,
-                'furniture_item_id': binding.furniture_item.id,
-                'wall_id': binding.wall.id,
-                'offset_x': binding.offset_x,
-                'offset_y': binding.offset_y,
-                'distance_from_start': binding.distance_from_start,
+                'comment': item.comment,
             })
         
         # Create JSON response
@@ -179,29 +167,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 z_index=item_data.get('z_index', 0),
                 width=item_data.get('width', 50),
                 height=item_data.get('height', 50),
-                length=item_data.get('length', 50),
                 angle=item_data.get('angle', 0),
                 color=item_data.get('color', '#888888'),
                 visible=item_data.get('visible', True),
                 locked=item_data.get('locked', False),
+                comment=item_data.get('comment', ''),
             )
             item_map[item_data.get('id')] = item
         
-        # Import bindings
-        for binding_data in data.get('bindings', []):
-            furniture_item_id = binding_data.get('furniture_item_id')
-            wall_id = binding_data.get('wall_id')
-            
-            if furniture_item_id in item_map and wall_id in wall_map:
-                ObjectBinding.objects.create(
-                    project=project,
-                    furniture_item=item_map[furniture_item_id],
-                    wall=wall_map[wall_id],
-                    offset_x=binding_data.get('offset_x', 0),
-                    offset_y=binding_data.get('offset_y', 0),
-                    distance_from_start=binding_data.get('distance_from_start', 0),
-                )
-        
+
         serializer = self.get_serializer(project)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -245,31 +219,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 z_index=item_data.get('z_index', 0),
                 width=item_data.get('width', 50),
                 height=item_data.get('height', 50),
-                length=item_data.get('length', 50),
                 angle=item_data.get('angle', 0),
                 color=item_data.get('color', '#888888'),
+                comment=item_data.get('comment', ''),
             )
             return Response(FurnitureItemSerializer(item).data, status=status.HTTP_201_CREATED)
         else:
             items = project.furniture_items.all()
             return Response(FurnitureItemSerializer(items, many=True).data)
-
-    @action(detail=True, methods=['post', 'get'])
-    def bindings(self, request, pk=None):
-        """List or create object bindings for a project"""
-        project = self.get_object()
-        
-        if request.method == 'POST':
-            binding_data = request.data
-            binding = ObjectBinding.objects.create(
-                project=project,
-                furniture_item_id=binding_data.get('furniture_item'),
-                wall_id=binding_data.get('wall'),
-                offset_x=binding_data.get('offset_x', 0),
-                offset_y=binding_data.get('offset_y', 0),
-                distance_from_start=binding_data.get('distance_from_start', 0),
-            )
-            return Response(ObjectBindingSerializer(binding).data, status=status.HTTP_201_CREATED)
-        else:
-            bindings = project.bindings.all()
-            return Response(ObjectBindingSerializer(bindings, many=True).data)
