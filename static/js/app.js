@@ -20,6 +20,12 @@ const wallItems = [
   { type: 'wall', subtype: 'standard', name: 'Wall', width: 240, height: 12, color: '#4f4f4f' },
 ];
 
+const openingItems = [
+  // width: size along wall; thickness is forced to wall thickness on placement
+  { type: 'opening', subtype: 'door', name: 'Door', width: 80, height: 12, color: '#2d6a4f' },
+  { type: 'opening', subtype: 'window', name: 'Window', width: 60, height: 12, color: '#1d4ed8' },
+];
+
 // App state
 let appState = {
   canvasObjects: [],
@@ -32,9 +38,17 @@ let appState = {
   rotationStart: null,
   dragOffset: { x: 0, y: 0 },
   previewObject: null,
+  placingItem: null, // { item, width, height }
   projectName: 'Untitled Project',
   walls: [],
   detectedRooms: [],
+  pressedMoveKeys: new Set(),
+  keyboardMoveIntervalId: null,
+  isMeasureMode: false,
+  isMeasureDeleteMode: false,
+  measureStartPoint: null,
+  measurePreviewEndPoint: null,
+  measureLines: [],
 };
 
 // Modal state
@@ -415,6 +429,8 @@ function renderSidebar() {
 
   furnitureItems.forEach(item => furnitureGrid.appendChild(createSidebarItem(item)));
   wallItems.forEach(item => wallGrid.appendChild(createSidebarItem(item)));
+  // Doors/windows are shown together with walls.
+  openingItems.forEach(item => wallGrid.appendChild(createSidebarItem(item)));
   appState.customObjects.forEach(item => {
     const sidebarItem = {
       type: 'furniture',
@@ -433,11 +449,15 @@ function createSidebarItem(item) {
   const el = document.createElement('div');
   el.className = 'item';
   el.style.backgroundColor = item.color;
-  el.draggable = true;
+  el.draggable = item.type !== 'opening';
   el.textContent = item.name;
 
-  el.addEventListener('dragstart', (e) => handleSidebarDragStart(e, item));
-  el.addEventListener('dragend', handleSidebarDragEnd);
+  if (item.type === 'opening') {
+    el.addEventListener('mousedown', (e) => startPlacingOpeningFromSidebar(e, item));
+  } else {
+    el.addEventListener('dragstart', (e) => handleSidebarDragStart(e, item));
+    el.addEventListener('dragend', handleSidebarDragEnd);
+  }
   return el;
 }
 
@@ -488,21 +508,213 @@ function handleSidebarDragEnd(e) {
   }
 }
 
+function startPlacingOpeningFromSidebar(e, item) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const dims = normalizeObjectDimensions(item);
+  appState.placingItem = { item, width: dims.width, height: dims.height, lastAttached: null };
+
+  // Initialize preview at current pointer position (if over canvas).
+  updateOpeningPlacementPreview(e.clientX, e.clientY);
+  renderCanvas();
+
+  const onMove = (ev) => {
+    updateOpeningPlacementPreview(ev.clientX, ev.clientY);
+    renderCanvas();
+  };
+
+  const onUp = (ev) => {
+    document.removeEventListener('mousemove', onMove, true);
+    document.removeEventListener('mouseup', onUp, true);
+    // Ensure preview state matches the actual release position.
+    updateOpeningPlacementPreview(ev.clientX, ev.clientY);
+    finalizeOpeningPlacement();
+  };
+
+  document.addEventListener('mousemove', onMove, true);
+  document.addEventListener('mouseup', onUp, true);
+}
+
+function updateOpeningPlacementPreview(clientX, clientY) {
+  if (!appState.placingItem) return;
+  const canvas = document.getElementById('canvas');
+  if (!canvas) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+
+  const item = appState.placingItem.item;
+  const dimensions = { width: appState.placingItem.width, height: appState.placingItem.height };
+
+  const best = findNearestWallProjection(x, y);
+  const attachDistance = 35;
+  const detachDistance = 55;
+  const wasAttached = Boolean(appState.previewObject?._previewAttachedToWall);
+  const shouldAttach = best && (best.distToCenterline <= (wasAttached ? detachDistance : attachDistance));
+
+  if (shouldAttach) {
+    const wall = best.wall;
+    const width = Number(dimensions.width) || 60;
+    const halfWall = wall.width / 2;
+    const halfOpening = width / 2;
+    const wallOffset = clamp(best.localX, -halfWall + halfOpening, halfWall - halfOpening);
+    const pos = wallLocalToWorld(wall, wallOffset, 0);
+    appState.previewObject = {
+      ...item,
+      width,
+      height: wall.height,
+      x: pos.x,
+      y: pos.y,
+      angle: wall.angle || 0,
+      z: (Number(wall.z) || 0) + 0.2,
+      _previewAttachedToWall: true,
+      _previewWallId: wall.id,
+      _previewWallOffset: wallOffset,
+    };
+    appState.placingItem.lastAttached = { wallId: wall.id, wallOffset };
+  } else {
+    appState.previewObject = {
+      ...item,
+      ...dimensions,
+      x,
+      y,
+      angle: 0,
+      z: 0,
+      _previewAttachedToWall: false,
+      _previewWallId: null,
+      _previewWallOffset: null,
+    };
+  }
+}
+
+function finalizeOpeningPlacement() {
+  const preview = appState.previewObject;
+  const placing = appState.placingItem;
+  appState.placingItem = null;
+
+  if (!placing) {
+    appState.previewObject = null;
+    renderCanvas();
+    return;
+  }
+
+  // Use current attached preview if available, otherwise fall back to last attached state.
+  const attachment = (preview && preview._previewAttachedToWall === true && preview._previewWallId)
+    ? { wallId: preview._previewWallId, wallOffset: preview._previewWallOffset || 0 }
+    : (placing.lastAttached ? placing.lastAttached : null);
+
+  if (!attachment) {
+    appState.previewObject = null;
+    renderCanvas();
+    return;
+  }
+
+  const wall = appState.canvasObjects.find(o => o.type === 'wall' && o.id === attachment.wallId);
+  if (!wall) {
+    appState.previewObject = null;
+    renderCanvas();
+    return;
+  }
+
+  const opening = createOpeningOnWall(placing.item, wall, attachment.wallOffset || 0);
+  if (opening) {
+    appState.canvasObjects.push(opening);
+    saveToLocalStorage();
+  }
+
+  appState.previewObject = null;
+  renderCanvas();
+}
+
 // =============== CANVAS ===============
 function setupCanvasEventListeners() {
   const canvas = document.getElementById('canvas');
   canvas.addEventListener('dragover', handleCanvasDragOver);
   canvas.addEventListener('dragleave', handleCanvasDragLeave);
   canvas.addEventListener('drop', handleCanvasDrop);
+  canvas.addEventListener('click', handleCanvasMeasureClick, true);
   canvas.addEventListener('mousemove', handleCanvasMouseMove);
   canvas.addEventListener('mouseup', handleCanvasMouseUp);
   canvas.addEventListener('mouseleave', handleCanvasMouseUp);
+}
+
+function getCanvasPointerPosition(e) {
+  const canvas = document.getElementById('canvas');
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
+}
+
+function handleCanvasMeasureClick(e) {
+  if (!appState.isMeasureMode) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  const point = getCanvasPointerPosition(e);
+  if (appState.isMeasureDeleteMode) {
+    const findLineIndexAtPoint = (p) => {
+      const HIT_RADIUS = 8;
+      const distToSegment = (pt, a, b) => {
+        const abx = b.x - a.x;
+        const aby = b.y - a.y;
+        const abLenSq = abx * abx + aby * aby;
+        if (abLenSq === 0) return Math.hypot(pt.x - a.x, pt.y - a.y);
+        const t = Math.max(0, Math.min(1, ((pt.x - a.x) * abx + (pt.y - a.y) * aby) / abLenSq));
+        const projX = a.x + t * abx;
+        const projY = a.y + t * aby;
+        return Math.hypot(pt.x - projX, pt.y - projY);
+      };
+
+      let bestIndex = -1;
+      let bestDist = Infinity;
+      for (let i = 0; i < appState.measureLines.length; i++) {
+        const line = appState.measureLines[i];
+        const d = distToSegment(p, line.start, line.end);
+        if (d <= HIT_RADIUS && d < bestDist) {
+          bestDist = d;
+          bestIndex = i;
+        }
+      }
+      return bestIndex;
+    };
+
+    const lineIndex = findLineIndexAtPoint(point);
+    if (lineIndex >= 0) {
+      appState.measureLines.splice(lineIndex, 1);
+      renderCanvas();
+    }
+    return;
+  }
+
+  if (!appState.measureStartPoint) {
+    appState.measureStartPoint = point;
+    appState.measurePreviewEndPoint = point;
+    renderCanvas();
+    return;
+  }
+
+  appState.measureLines.push({
+    start: { ...appState.measureStartPoint },
+    end: point,
+  });
+  appState.measureStartPoint = null;
+  appState.measurePreviewEndPoint = null;
+  renderCanvas();
 }
 
 function handleCanvasDragOver(e) {
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
   document.getElementById('canvas').classList.add('dragging-over');
+
+  // If we are placing an opening with the custom mousedown flow,
+  // ignore native dragover previews.
+  if (appState.placingItem) return;
 
   const data = e.dataTransfer.getData('application/json');
   if (data) {
@@ -511,7 +723,51 @@ function handleCanvasDragOver(e) {
     const rect = document.getElementById('canvas').getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    appState.previewObject = { ...item, ...dimensions, x, y };
+    if (item.type === 'opening') {
+      // "Attach/detach" behavior: near a wall => attach and move only along wall.
+      // Far from walls => detach and follow cursor.
+      const best = findNearestWallProjection(x, y);
+      const attachDistance = 35;
+      const detachDistance = 55; // hysteresis (prevents flicker)
+
+      const wasAttached = Boolean(appState.previewObject?._previewAttachedToWall);
+      const shouldAttach = best && (best.distToCenterline <= (wasAttached ? detachDistance : attachDistance));
+
+      if (shouldAttach) {
+        const wall = best.wall;
+        const width = Number(dimensions.width) || 60;
+        const halfWall = wall.width / 2;
+        const halfOpening = width / 2;
+        const wallOffset = clamp(best.localX, -halfWall + halfOpening, halfWall - halfOpening);
+        const pos = wallLocalToWorld(wall, wallOffset, 0);
+        appState.previewObject = {
+          ...item,
+          width,
+          height: wall.height,
+          x: pos.x,
+          y: pos.y,
+          angle: wall.angle || 0,
+          z: (Number(wall.z) || 0) + 0.2,
+          _previewAttachedToWall: true,
+          _previewWallId: wall.id,
+          _previewWallOffset: wallOffset,
+        };
+      } else {
+        appState.previewObject = {
+          ...item,
+          ...dimensions,
+          x,
+          y,
+          angle: 0,
+          z: 0,
+          _previewAttachedToWall: false,
+          _previewWallId: null,
+          _previewWallOffset: null,
+        };
+      }
+    } else {
+      appState.previewObject = { ...item, ...dimensions, x, y, angle: 0 };
+    }
     renderCanvas();
   }
 }
@@ -529,7 +785,11 @@ function handleCanvasDrop(e) {
   e.preventDefault();
   const canvas = document.getElementById('canvas');
   canvas.classList.remove('dragging-over');
-  appState.previewObject = null;
+  // keep previewObject for placement decision below; clear after handling drop
+
+  // If we are placing an opening with the custom mousedown flow,
+  // ignore native drop.
+  if (appState.placingItem) return;
 
   const data = e.dataTransfer.getData('application/json');
   if (data) {
@@ -560,13 +820,47 @@ function handleCanvasDrop(e) {
       newObject.bearing = false;
     }
 
+    if (item.type === 'opening') {
+      // Create ONLY if preview was attached to a wall.
+      const preview = appState.previewObject;
+      if (!preview || preview._previewAttachedToWall !== true || !preview._previewWallId) {
+        alert('Двери/окна можно добавить только когда они прикрепились к стене.');
+        renderCanvas();
+        appState.previewObject = null;
+        return;
+      }
+
+      const wall = appState.canvasObjects.find(o => o.type === 'wall' && o.id === preview._previewWallId);
+      if (!wall) {
+        alert('Стена не найдена для привязки двери/окна.');
+        renderCanvas();
+        appState.previewObject = null;
+        return;
+      }
+
+      const opening = createOpeningOnWall(item, wall, preview._previewWallOffset || 0);
+      if (!opening) return;
+      appState.canvasObjects.push(opening);
+      saveToLocalStorage();
+      renderCanvas();
+      appState.previewObject = null;
+      return;
+    }
+
     appState.canvasObjects.push(newObject);
     saveToLocalStorage();
     renderCanvas();
   }
+
+  appState.previewObject = null;
 }
 
 function handleCanvasMouseMove(e) {
+  if (appState.isMeasureMode && appState.measureStartPoint) {
+    appState.measurePreviewEndPoint = getCanvasPointerPosition(e);
+    renderCanvas();
+  }
+
   const canvas = document.getElementById('canvas');
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
@@ -590,6 +884,28 @@ function handleCanvasMouseMove(e) {
   if (appState.draggingObject) {
     const obj = appState.canvasObjects.find(o => o.id === appState.draggingObject);
     if (obj) {
+      // Openings are constrained to their wall: allow drag only along wall axis.
+      if (obj.type === 'opening') {
+        const wall = appState.canvasObjects.find(o => o.type === 'wall' && o.id === obj.wallId);
+        if (!wall) {
+          renderCanvas();
+          return;
+        }
+
+        const targetX = x - appState.dragOffset.x;
+        const targetY = y - appState.dragOffset.y;
+        const local = worldToWallLocal(wall, targetX, targetY);
+        const halfWall = wall.width / 2;
+        const halfOpening = obj.width / 2;
+        obj.wallOffset = clamp(local.x, -halfWall + halfOpening, halfWall - halfOpening);
+        updateOpeningWorldPose(obj, wall);
+        renderCanvas();
+        return;
+      }
+
+      const prevX = obj.x;
+      const prevY = obj.y;
+
       obj.x = x - appState.dragOffset.x;
       obj.y = y - appState.dragOffset.y;
 
@@ -618,6 +934,16 @@ function handleCanvasMouseMove(e) {
           // Move center so that endpoint aligns with target
           obj.x += targetPoint.x - snapPoint.x;
           obj.y += targetPoint.y - snapPoint.y;
+        }
+
+        // Recompute attached openings pose so they move with the wall.
+        const moved = obj.x !== prevX || obj.y !== prevY;
+        if (moved) {
+          for (const o of appState.canvasObjects) {
+            if (o.type === 'opening' && o.wallId === obj.id) {
+              updateOpeningWorldPose(o, obj);
+            }
+          }
         }
       } else {
         // Furniture snaps normally
@@ -796,74 +1122,87 @@ function detectRooms() {
   
   if (walls.length === 0) return rooms;
 
-  // Check if walls form a closed polygon by verifying connectivity
-  // For each wall, check if its ends connect to other walls
-  const visited = new Set();
-  
-  for (let i = 0; i < walls.length; i++) {
-    if (visited.has(walls[i].id)) continue;
-    
-    // Start tracing from this wall
-    const chain = [];
-    let currentWall = walls[i];
-    let chainVisited = new Set();
-    
-    while (currentWall && !chainVisited.has(currentWall.id)) {
-      chain.push(currentWall);
-      chainVisited.add(currentWall.id);
-      
-      // Find next connected wall
-      const wallEnd = {
-        x: currentWall.x + currentWall.width / 2 * Math.cos(currentWall.angle * Math.PI / 180),
-        y: currentWall.y + currentWall.width / 2 * Math.sin(currentWall.angle * Math.PI / 180)
-      };
-      
-      let found = false;
-      for (const wall of walls) {
-        if (chainVisited.has(wall.id)) continue;
-        
-        const wallStart = {
-          x: wall.x - wall.width / 2 * Math.cos(wall.angle * Math.PI / 180),
-          y: wall.y - wall.width / 2 * Math.sin(wall.angle * Math.PI / 180)
-        };
-        
-        const dist = Math.sqrt(Math.pow(wallEnd.x - wallStart.x, 2) + Math.pow(wallEnd.y - wallStart.y, 2));
-        
-        if (dist < 5) {
-          currentWall = wall;
-          found = true;
-          break;
+  const CONNECT_EPS = 8;
+
+  const wallEndpoints = (w) => {
+    const rad = (w.angle || 0) * Math.PI / 180;
+    const dx = (w.width / 2) * Math.cos(rad);
+    const dy = (w.width / 2) * Math.sin(rad);
+    return {
+      start: { x: w.x - dx, y: w.y - dy },
+      end: { x: w.x + dx, y: w.y + dy },
+    };
+  };
+
+  const dist2 = (a, b) => {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  };
+
+  const isClose = (a, b, eps = CONNECT_EPS) => dist2(a, b) <= eps * eps;
+
+  // We trace chains, allowing connection to either end of next wall (reversing direction if needed).
+  const visitedWalls = new Set();
+
+  for (const startWall of walls) {
+    if (visitedWalls.has(startWall.id)) continue;
+
+    const chainWalls = [];
+    const chainPoints = [];
+
+    const startEP = wallEndpoints(startWall);
+    chainWalls.push(startWall);
+    chainPoints.push(startEP.start);
+    chainPoints.push(startEP.end);
+
+    let currentEnd = startEP.end;
+    let closed = false;
+
+    while (chainWalls.length <= walls.length) {
+      // Find next wall that connects to currentEnd (either its start or end).
+      let next = null;
+      let nextEP = null;
+      let reverse = false;
+
+      for (const w of walls) {
+        if (chainWalls.some(cw => cw.id === w.id)) continue;
+        const ep = wallEndpoints(w);
+        if (isClose(currentEnd, ep.start)) {
+          next = w; nextEP = ep; reverse = false; break;
+        }
+        if (isClose(currentEnd, ep.end)) {
+          next = w; nextEP = ep; reverse = true; break;
         }
       }
-      
-      if (!found) break;
-    }
-    
-    // Check if chain is closed (ends connect)
-    if (chain.length > 2) {
-      const firstWallStart = {
-        x: chain[0].x - chain[0].width / 2 * Math.cos(chain[0].angle * Math.PI / 180),
-        y: chain[0].y - chain[0].width / 2 * Math.sin(chain[0].angle * Math.PI / 180)
-      };
-      
-      const lastWallEnd = {
-        x: chain[chain.length - 1].x + chain[chain.length - 1].width / 2 * Math.cos(chain[chain.length - 1].angle * Math.PI / 180),
-        y: chain[chain.length - 1].y + chain[chain.length - 1].width / 2 * Math.sin(chain[chain.length - 1].angle * Math.PI / 180)
-      };
-      
-      const closingDist = Math.sqrt(Math.pow(firstWallStart.x - lastWallEnd.x, 2) + Math.pow(firstWallStart.y - lastWallEnd.y, 2));
-      
-      if (closingDist < 5) {
-        // This is a closed room
-        const roomBounds = calculateRoomBounds(chain);
-        rooms.push({
-          walls: chain,
-          bounds: roomBounds,
-          area: calculatePolygonArea(roomBounds)
-        });
-        
-        chain.forEach(wall => visited.add(wall.id));
+
+      if (!next) break;
+
+      chainWalls.push(next);
+      const newPoint = reverse ? nextEP.start : nextEP.end;
+      chainPoints.push(newPoint);
+      currentEnd = newPoint;
+
+      // Closed if we returned to first point.
+      if (chainPoints.length > 3 && isClose(currentEnd, chainPoints[0])) {
+        closed = true;
+        break;
       }
+    }
+
+    if (closed && chainPoints.length >= 4) {
+      // Ensure last point equals first for rendering consistency.
+      if (!isClose(chainPoints[chainPoints.length - 1], chainPoints[0])) {
+        chainPoints.push({ ...chainPoints[0] });
+      }
+
+      rooms.push({
+        walls: chainWalls,
+        polygon: chainPoints,
+        area: calculatePolygonArea(chainPoints),
+      });
+
+      chainWalls.forEach(w => visitedWalls.add(w.id));
     }
   }
   
@@ -871,27 +1210,146 @@ function detectRooms() {
   return rooms;
 }
 
-function calculateRoomBounds(walls) {
-  let minX = Infinity, maxX = -Infinity;
-  let minY = Infinity, maxY = -Infinity;
-  
-  walls.forEach(wall => {
-    const halfW = wall.width / 2 * Math.cos(wall.angle * Math.PI / 180);
-    const halfH = wall.width / 2 * Math.sin(wall.angle * Math.PI / 180);
-    
-    minX = Math.min(minX, wall.x - halfW, wall.x + halfW);
-    maxX = Math.max(maxX, wall.x - halfW, wall.x + halfW);
-    minY = Math.min(minY, wall.y - halfH, wall.y + halfH);
-    maxY = Math.max(maxY, wall.y - halfH, wall.y + halfH);
-  });
-  
-  return { minX, maxX, minY, maxY };
+function calculatePolygonArea(points) {
+  // points: [{x,y}, ...] optionally closed (last==first)
+  if (!points || points.length < 3) return 0;
+  let area2 = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    area2 += points[i].x * points[i + 1].y - points[i + 1].x * points[i].y;
+  }
+  return Math.abs(area2) / 2;
 }
 
-function calculatePolygonArea(bounds) {
-  const width = bounds.maxX - bounds.minX;
-  const height = bounds.maxY - bounds.minY;
-  return width * height;
+function getObjectCorners(obj) {
+  const halfWidth = (obj.width || 0) / 2;
+  const halfHeight = (obj.height || 0) / 2;
+  const angleRad = ((obj.angle || 0) * Math.PI) / 180;
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+
+  const localCorners = [
+    { x: -halfWidth, y: -halfHeight },
+    { x: halfWidth, y: -halfHeight },
+    { x: halfWidth, y: halfHeight },
+    { x: -halfWidth, y: halfHeight },
+  ];
+
+  return localCorners.map((p) => ({
+    x: obj.x + p.x * cos - p.y * sin,
+    y: obj.y + p.x * sin + p.y * cos,
+  }));
+}
+
+function projectPolygon(points, axis) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const p of points) {
+    const projection = p.x * axis.x + p.y * axis.y;
+    if (projection < min) min = projection;
+    if (projection > max) max = projection;
+  }
+  return { min, max };
+}
+
+function polygonsOverlap(polyA, polyB) {
+  const polygons = [polyA, polyB];
+  for (const polygon of polygons) {
+    for (let i = 0; i < polygon.length; i++) {
+      const nextI = (i + 1) % polygon.length;
+      const edge = {
+        x: polygon[nextI].x - polygon[i].x,
+        y: polygon[nextI].y - polygon[i].y,
+      };
+      const axis = { x: -edge.y, y: edge.x };
+      const length = Math.hypot(axis.x, axis.y);
+      if (!length) continue;
+      axis.x /= length;
+      axis.y /= length;
+
+      const projA = projectPolygon(polyA, axis);
+      const projB = projectPolygon(polyB, axis);
+      if (projA.max < projB.min || projB.max < projA.min) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  const n = polygon.length;
+  if (n < 3) return false;
+  const EPS = 1e-6;
+
+  const isPointOnSegment = (p, a, b) => {
+    const cross = (p.y - a.y) * (b.x - a.x) - (p.x - a.x) * (b.y - a.y);
+    if (Math.abs(cross) > EPS) return false;
+    const dot = (p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y);
+    if (dot < -EPS) return false;
+    const lenSq = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+    if (dot - lenSq > EPS) return false;
+    return true;
+  };
+
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const current = polygon[i];
+    const prev = polygon[j];
+
+    // Edge contact counts as valid (inside room).
+    if (isPointOnSegment(point, prev, current)) return true;
+
+    const intersects = ((current.y > point.y) !== (prev.y > point.y))
+      && (point.x < ((prev.x - current.x) * (point.y - current.y)) / ((prev.y - current.y) || 1e-9) + current.x);
+    if (intersects) inside = !inside;
+  }
+
+  return inside;
+}
+
+function isOverlapAllowed(objA, objB) {
+  if (objA.type === 'wall' && objB.type === 'wall') return true;
+  if (objA.type === 'opening' && objB.type === 'wall') return true;
+  if (objA.type === 'wall' && objB.type === 'opening') return true;
+  return false;
+}
+
+function isFurnitureInsideDetectedRoom(obj, rooms) {
+  if (!rooms || rooms.length === 0) return false;
+  const corners = getObjectCorners(obj);
+
+  return rooms.some((room) => {
+    const polygon = room.polygon || [];
+    if (polygon.length < 3) return false;
+    return corners.every((corner) => pointInPolygon(corner, polygon));
+  });
+}
+
+function hasInvalidOverlap(targetObj, allObjects) {
+  const targetCorners = getObjectCorners(targetObj);
+  for (const other of allObjects) {
+    if (other.id === targetObj.id) continue;
+    if (isOverlapAllowed(targetObj, other)) continue;
+    const otherCorners = getObjectCorners(other);
+    if (polygonsOverlap(targetCorners, otherCorners)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getObjectPlacementErrors(targetObj, allObjects, rooms) {
+  const errors = [];
+
+  if (targetObj.type === 'furniture' && !isFurnitureInsideDetectedRoom(targetObj, rooms)) {
+    errors.push('outside-room');
+  }
+
+  if (hasInvalidOverlap(targetObj, allObjects)) {
+    errors.push('overlap');
+  }
+
+  return errors;
 }
 
 function renderCanvas() {
@@ -912,26 +1370,56 @@ function renderCanvas() {
     svg.style.pointerEvents = 'none';
     
     appState.detectedRooms.forEach((room, index) => {
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       const colors = ['#949494', '#e3f2fd', '#fff3e0', '#fce4ec', '#f3e5f5'];
-      rect.setAttribute('x', room.bounds.minX);
-      rect.setAttribute('y', room.bounds.minY);
-      rect.setAttribute('width', room.bounds.maxX - room.bounds.minX);
-      rect.setAttribute('height', room.bounds.maxY - room.bounds.minY);
-      rect.setAttribute('fill', colors[index % colors.length]);
-      rect.setAttribute('fill-opacity', '0.3');
-      rect.setAttribute('stroke', '#999');
-      rect.setAttribute('stroke-width', '2');
-      rect.setAttribute('stroke-dasharray', '5,5');
-      svg.appendChild(rect);
+      if (room.polygon && room.polygon.length >= 3) {
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        const pts = room.polygon
+          .map(p => `${Math.round(p.x)},${Math.round(p.y)}`)
+          .join(' ');
+        poly.setAttribute('points', pts);
+        poly.setAttribute('fill', colors[index % colors.length]);
+        poly.setAttribute('fill-opacity', '0.25');
+        poly.setAttribute('stroke', '#999');
+        poly.setAttribute('stroke-width', '2');
+        poly.setAttribute('stroke-dasharray', '5,5');
+        svg.appendChild(poly);
+      }
     });
     
     canvas.appendChild(svg);
   }
 
-  const sorted = [...appState.canvasObjects].sort((a, b) => a.z - b.z);
+  const typePriority = (obj) => {
+    if (obj.type === 'wall') return 0;
+    if (obj.type === 'opening') return 2; // must be above wall
+    return 1;
+  };
+
+  const sorted = [...appState.canvasObjects].sort((a, b) => {
+    const pa = typePriority(a);
+    const pb = typePriority(b);
+    if (pa !== pb) return pa - pb;
+    const za = Number(a.z) || 0;
+    const zb = Number(b.z) || 0;
+    return za - zb;
+  });
+
+  const draggingObj = appState.draggingObject
+    ? appState.canvasObjects.find(o => o.id === appState.draggingObject)
+    : null;
+  const draggingWallId = draggingObj?.type === 'wall' ? draggingObj.id : null;
+  const placementErrorsById = new Map();
+  for (const obj of appState.canvasObjects) {
+    const errors = getObjectPlacementErrors(obj, appState.canvasObjects, appState.detectedRooms);
+    if (errors.length > 0) placementErrorsById.set(obj.id, errors);
+  }
 
   sorted.forEach(obj => {
+    if (obj.type === 'opening') {
+      const wall = appState.canvasObjects.find(o => o.type === 'wall' && o.id === obj.wallId);
+      if (wall) updateOpeningWorldPose(obj, wall);
+    }
+
     const el = document.createElement('div');
     el.className = `canvas-object ${obj.type === 'wall' ? 'wall' : ''}${obj.type === 'wall' && obj.bearing ? ' wall-bearing' : ''}`;
     el.dataset.id = obj.id;
@@ -951,7 +1439,21 @@ function renderCanvas() {
     el.style.fontWeight = 'bold';
     el.style.cursor = obj.locked ? 'not-allowed' : appState.draggingObject === obj.id ? 'grabbing' : 'grab';
     el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
-    el.style.zIndex = appState.draggingObject === obj.id ? 10 : obj.z;
+    const zInt = Math.round(Number(obj.z) || 0);
+
+    if (draggingWallId && obj.type === 'opening' && obj.wallId === draggingWallId) {
+      // While dragging a wall, its openings must stay above it.
+      el.style.zIndex = 10050 + zInt;
+    } else if (appState.draggingObject === obj.id) {
+      // Dragged object goes very top (except the special case above).
+      el.style.zIndex = draggingWallId ? 10000 : 9999;
+    } else if (obj.type === 'opening') {
+      el.style.zIndex = 5000 + zInt;
+    } else if (obj.type === 'wall') {
+      el.style.zIndex = 1000 + zInt;
+    } else {
+      el.style.zIndex = 3000 + zInt;
+    }
     el.style.opacity = obj.visible ? 1 : 0.5;
     el.style.transform = `rotate(${obj.angle || 0}deg)`;
     el.style.transformOrigin = 'center center';
@@ -959,6 +1461,11 @@ function renderCanvas() {
 
     if (appState.selectedObject?.id === obj.id) {
       el.style.border = '3px solid #007bff';
+    }
+
+    if (placementErrorsById.has(obj.id)) {
+      el.style.border = '3px solid #d32f2f';
+      el.style.boxShadow = '0 0 0 2px rgba(211, 47, 47, 0.35)';
     }
 
     el.addEventListener('mousedown', (e) => handleObjectMouseDown(e, obj));
@@ -981,13 +1488,14 @@ function renderCanvas() {
 
   if (appState.previewObject) {
     const preview = appState.previewObject;
+    const previewErrors = getObjectPlacementErrors(preview, appState.canvasObjects, appState.detectedRooms);
     const el = document.createElement('div');
     el.className = 'canvas-object preview';
     el.style.position = 'absolute';
     el.style.left = `${preview.x - preview.width / 2}px`;
-    el.style.top = `${preview.y - preview.length / 2}px`;
+    el.style.top = `${preview.y - preview.height / 2}px`;
     el.style.width = `${preview.width}px`;
-    el.style.height = `${preview.length}px`;
+    el.style.height = `${preview.height}px`;
     el.style.backgroundColor = preview.color;
     el.style.border = '2px dashed #333';
     el.style.borderRadius = '4px';
@@ -999,12 +1507,102 @@ function renderCanvas() {
     el.style.fontWeight = 'bold';
     el.style.opacity = '0.7';
     el.style.pointerEvents = 'none';
+    el.style.transform = `rotate(${preview.angle || 0}deg)`;
+    el.style.transformOrigin = 'center center';
+    el.style.zIndex = 9000;
+    if (preview.type === 'opening' && preview._previewAttachedToWall === false) {
+      el.style.opacity = '0.35';
+      el.style.borderColor = '#c62828';
+    }
+    if (previewErrors.length > 0) {
+      el.style.borderColor = '#d32f2f';
+      el.style.opacity = '0.5';
+      el.style.boxShadow = '0 0 0 2px rgba(211, 47, 47, 0.35)';
+    }
     el.textContent = preview.name;
     canvas.appendChild(el);
+  }
+
+  const linesToDraw = [...appState.measureLines];
+  if (appState.measureStartPoint && appState.measurePreviewEndPoint) {
+    linesToDraw.push({ start: appState.measureStartPoint, end: appState.measurePreviewEndPoint });
+  }
+
+  if (linesToDraw.length > 0) {
+    const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    overlay.style.position = 'absolute';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.zIndex = '20000';
+
+    const CM_PER_PIXEL = 1;
+
+    const makePoint = (x, y) => {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      p.setAttribute('cx', x);
+      p.setAttribute('cy', y);
+      p.setAttribute('r', '5');
+      p.setAttribute('fill', '#ff1744');
+      p.setAttribute('stroke', '#ffffff');
+      p.setAttribute('stroke-width', '2');
+      return p;
+    };
+
+    for (const lineToDraw of linesToDraw) {
+      const dx = lineToDraw.end.x - lineToDraw.start.x;
+      const dy = lineToDraw.end.y - lineToDraw.start.y;
+      const distanceCm = Math.hypot(dx, dy) * CM_PER_PIXEL;
+      const midX = (lineToDraw.start.x + lineToDraw.end.x) / 2;
+      const midY = (lineToDraw.start.y + lineToDraw.end.y) / 2;
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', lineToDraw.start.x);
+      line.setAttribute('y1', lineToDraw.start.y);
+      line.setAttribute('x2', lineToDraw.end.x);
+      line.setAttribute('y2', lineToDraw.end.y);
+      line.setAttribute('stroke', '#ff1744');
+      line.setAttribute('stroke-width', '3');
+      overlay.appendChild(line);
+
+      overlay.appendChild(makePoint(lineToDraw.start.x, lineToDraw.start.y));
+      overlay.appendChild(makePoint(lineToDraw.end.x, lineToDraw.end.y));
+
+      const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      const labelWidth = 96;
+      const labelHeight = 24;
+      labelBg.setAttribute('x', midX - labelWidth / 2);
+      labelBg.setAttribute('y', midY - labelHeight - 10);
+      labelBg.setAttribute('width', labelWidth);
+      labelBg.setAttribute('height', labelHeight);
+      labelBg.setAttribute('rx', 6);
+      labelBg.setAttribute('fill', '#111827');
+      labelBg.setAttribute('fill-opacity', '0.85');
+      overlay.appendChild(labelBg);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', midX);
+      label.setAttribute('y', midY - 14);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('fill', '#ffffff');
+      label.setAttribute('font-size', '12');
+      label.setAttribute('font-weight', '700');
+      label.textContent = `${distanceCm.toFixed(1)} см`;
+      overlay.appendChild(label);
+    }
+
+    canvas.appendChild(overlay);
   }
 }
 
 function handleObjectMouseDown(e, obj) {
+  if (appState.isMeasureMode) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   if (obj.locked) return;
 
   e.preventDefault();
@@ -1046,7 +1644,13 @@ function deleteObject(id) {
   const obj = appState.canvasObjects.find(o => o.id === id);
   if (obj?.locked) return;
 
-  appState.canvasObjects = appState.canvasObjects.filter(o => o.id !== id);
+  if (obj?.type === 'wall') {
+    // Openings cannot exist without a wall.
+    appState.canvasObjects = appState.canvasObjects.filter(o => o.id !== id && !(o.type === 'opening' && o.wallId === id));
+  } else {
+    appState.canvasObjects = appState.canvasObjects.filter(o => o.id !== id);
+  }
+
   if (appState.selectedObject?.id === id) {
     appState.selectedObject = null;
   }
@@ -1131,6 +1735,13 @@ function updateInspector() {
   btnDelete.disabled = false;
   btnVisibility.disabled = false;
   btnLock.disabled = false;
+
+  if (obj.type === 'opening') {
+    fieldX.disabled = true;
+    fieldY.disabled = true;
+    fieldAngle.disabled = true;
+    fieldHeight.disabled = true;
+  }
 }
 
 function setupInspectorEventListeners() {
@@ -1239,9 +1850,218 @@ function snapAngle(angle, snap) {
   return Math.round(angle / snap) * snap;
 }
 
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function worldToWallLocal(wall, worldX, worldY) {
+  const dx = worldX - wall.x;
+  const dy = worldY - wall.y;
+  const rad = -(wall.angle || 0) * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos,
+  };
+}
+
+function wallLocalToWorld(wall, localX, localY) {
+  const rad = (wall.angle || 0) * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: wall.x + localX * cos - localY * sin,
+    y: wall.y + localX * sin + localY * cos,
+  };
+}
+
+function findNearestWallProjection(worldX, worldY) {
+  const walls = appState.canvasObjects.filter(o => o.type === 'wall');
+  if (walls.length === 0) return null;
+
+  let best = null;
+  for (const wall of walls) {
+    const local = worldToWallLocal(wall, worldX, worldY);
+    const halfLen = wall.width / 2;
+    const over = Math.max(0, Math.abs(local.x) - halfLen);
+    const distToCenterline = Math.abs(local.y);
+    const score = distToCenterline + over * 2;
+    if (!best || score < best.score) {
+      best = { wall, localX: local.x, distToCenterline, score };
+    }
+  }
+  return best;
+}
+
+function findWallHitAtPoint(worldX, worldY) {
+  const walls = appState.canvasObjects.filter(o => o.type === 'wall');
+  let best = null;
+
+  for (const wall of walls) {
+    const local = worldToWallLocal(wall, worldX, worldY);
+    const halfLen = wall.width / 2;
+    const halfTh = wall.height / 2;
+
+    // For openings, we want "nearest wall" snapping.
+    // Allow some tolerance beyond endpoints and thickness.
+    const maxDistToCenterline = Math.max(halfTh, 80);
+    const endTolerance = 30;
+
+    if (Math.abs(local.y) <= maxDistToCenterline && Math.abs(local.x) <= halfLen + endTolerance) {
+      // Penalize being past the endpoints so we prefer walls where projection lies inside segment.
+      const over = Math.max(0, Math.abs(local.x) - halfLen);
+      const score = Math.abs(local.y) + over * 2;
+      if (!best || score < best.score) best = { wall, localX: local.x, score };
+    }
+  }
+
+  return best ? { wall: best.wall, localX: best.localX } : null;
+}
+
+function createOpeningOnWall(openingItem, wall, localX) {
+  const width = Number(openingItem.width) || 60;
+  const height = wall.height;
+  const halfWall = wall.width / 2;
+  const halfOpening = width / 2;
+  const clampedLocalX = clamp(localX, -halfWall + halfOpening, halfWall - halfOpening);
+
+  const opening = {
+    id: Date.now() + Math.random(),
+    type: 'opening',
+    subtype: openingItem.subtype,
+    name: openingItem.name,
+    color: openingItem.color,
+    width,
+    height,
+    wallId: wall.id,
+    wallOffset: clampedLocalX,
+    x: wall.x,
+    y: wall.y,
+    angle: wall.angle || 0,
+    // IMPORTANT: keep z-index integer (CSS z-index is integer; floats can be ignored by browser)
+    z: (Math.round(Number(wall.z) || 0) + 1),
+    visible: true,
+    locked: false,
+    comment: '',
+  };
+
+  updateOpeningWorldPose(opening, wall);
+  return opening;
+}
+
+function updateOpeningWorldPose(opening, wall) {
+  opening.height = wall.height;
+  opening.angle = wall.angle || 0;
+  const wz = Math.round(Number(wall.z) || 0);
+  const oz = Math.round(Number(opening.z) || 0);
+  opening.z = Math.max(oz, wz + 1);
+
+  const pos = wallLocalToWorld(wall, opening.wallOffset || 0, 0);
+  opening.x = pos.x;
+  opening.y = pos.y;
+}
+
 function saveToLocalStorage() {
   localStorage.setItem('canvasObjects', JSON.stringify(appState.canvasObjects));
   localStorage.setItem('projectName', appState.projectName);
+}
+
+function isTextInputActive() {
+  const active = document.activeElement;
+  if (!active) return false;
+  const tag = active.tagName?.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || active.isContentEditable;
+}
+
+function moveSelectedObjectBy(deltaX, deltaY) {
+  const obj = appState.selectedObject;
+  if (!obj || obj.locked) return;
+
+  if (obj.type === 'opening') {
+    const wall = appState.canvasObjects.find(o => o.type === 'wall' && o.id === obj.wallId);
+    if (!wall) return;
+
+    const targetX = obj.x + deltaX;
+    const targetY = obj.y + deltaY;
+    const local = worldToWallLocal(wall, targetX, targetY);
+    const halfWall = wall.width / 2;
+    const halfOpening = obj.width / 2;
+    obj.wallOffset = clamp(local.x, -halfWall + halfOpening, halfWall - halfOpening);
+    updateOpeningWorldPose(obj, wall);
+  } else {
+    obj.x += deltaX;
+    obj.y += deltaY;
+  }
+
+  updateInspector();
+  renderCanvas();
+}
+
+function getKeyboardMoveDelta() {
+  const STEP = 1;
+  let dx = 0;
+  let dy = 0;
+
+  if (appState.pressedMoveKeys.has('ArrowLeft')) dx -= STEP;
+  if (appState.pressedMoveKeys.has('ArrowRight')) dx += STEP;
+  if (appState.pressedMoveKeys.has('ArrowUp')) dy -= STEP;
+  if (appState.pressedMoveKeys.has('ArrowDown')) dy += STEP;
+
+  return { dx, dy };
+}
+
+function applyKeyboardMovementTick() {
+  const { dx, dy } = getKeyboardMoveDelta();
+  if (dx === 0 && dy === 0) return;
+  moveSelectedObjectBy(dx, dy);
+}
+
+function startKeyboardMovement() {
+  if (appState.keyboardMoveIntervalId !== null) return;
+  appState.keyboardMoveIntervalId = setInterval(() => {
+    applyKeyboardMovementTick();
+  }, 30);
+}
+
+function stopKeyboardMovementIfIdle() {
+  if (appState.pressedMoveKeys.size > 0) return;
+  if (appState.keyboardMoveIntervalId !== null) {
+    clearInterval(appState.keyboardMoveIntervalId);
+    appState.keyboardMoveIntervalId = null;
+    saveToLocalStorage();
+  }
+}
+
+function setupKeyboardEventListeners() {
+  document.addEventListener('keydown', (e) => {
+    if (isTextInputActive()) return;
+
+    if (e.key === 'Delete') {
+      if (appState.selectedObject) {
+        e.preventDefault();
+        deleteObject(appState.selectedObject.id);
+      }
+      return;
+    }
+
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    appState.pressedMoveKeys.add(e.key);
+    applyKeyboardMovementTick();
+    startKeyboardMovement();
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    appState.pressedMoveKeys.delete(e.key);
+    stopKeyboardMovementIfIdle();
+  });
+
+  window.addEventListener('blur', () => {
+    appState.pressedMoveKeys.clear();
+    stopKeyboardMovementIfIdle();
+  });
 }
 
 function loadFromLocalStorage() {
@@ -1260,8 +2080,45 @@ function setupEventListeners() {
   setupCanvasEventListeners();
   setupInspectorEventListeners();
   setupZoomEventListeners();
+  setupKeyboardEventListeners();
   setupAuthUI();
   setupCustomObjectUI();
+
+  const measureToolBtn = document.getElementById('measureToolBtn');
+  const measureClearBtn = document.getElementById('measureClearBtn');
+  const clearMeasureLines = () => {
+    appState.measureStartPoint = null;
+    appState.measurePreviewEndPoint = null;
+    appState.measureLines = [];
+    appState.isMeasureDeleteMode = false;
+    measureClearBtn.classList.remove('active-tool');
+  };
+
+  measureClearBtn.addEventListener('click', () => {
+    if (!appState.isMeasureMode) return;
+    appState.isMeasureDeleteMode = !appState.isMeasureDeleteMode;
+    appState.measureStartPoint = null;
+    appState.measurePreviewEndPoint = null;
+    measureClearBtn.classList.toggle('active-tool', appState.isMeasureDeleteMode);
+    renderCanvas();
+  });
+
+  measureToolBtn.addEventListener('click', () => {
+    appState.isMeasureMode = !appState.isMeasureMode;
+    appState.isMeasureDeleteMode = false;
+    measureToolBtn.classList.toggle('active-tool', appState.isMeasureMode);
+    measureClearBtn.classList.toggle('visible', appState.isMeasureMode);
+    measureClearBtn.classList.remove('active-tool');
+    if (appState.isMeasureMode) {
+      appState.measureStartPoint = null;
+      appState.measurePreviewEndPoint = null;
+      appState.selectedObject = null;
+      updateInspector();
+    } else {
+      clearMeasureLines();
+    }
+    renderCanvas();
+  });
 
   document.getElementById('saveBtn').addEventListener('click', saveProject);
   document.getElementById('moreBtn').addEventListener('click', () => {

@@ -77,6 +77,24 @@ html, body {
   gap: 5px;
 }
 
+#measureToolBtn.active-tool {
+  background: #ffb703;
+  color: #1f2937;
+}
+
+#measureClearBtn.active-tool {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+#measureClearBtn {
+  display: none;
+}
+
+#measureClearBtn.visible {
+  display: inline-block;
+}
+
 /* Main content */
 .main {
   display: flex;
@@ -112,12 +130,8 @@ html, body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 8px;
   grid-auto-rows: minmax(72px, auto);
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
+  overflow: visible;
   width: 100%;
-  flex: 1;
-  max-height: calc(100% - 44px);
 }
 
 .sidebar .category {
