@@ -1307,6 +1307,67 @@ function pointInPolygon(point, polygon) {
   return inside;
 }
 
+function getPolygonWithoutDuplicateClosure(polygon) {
+  if (!polygon || polygon.length < 3) return [];
+  const first = polygon[0];
+  const last = polygon[polygon.length - 1];
+  if (first.x === last.x && first.y === last.y) {
+    return polygon.slice(0, -1);
+  }
+  return polygon;
+}
+
+function orientation(a, b, c) {
+  const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+  if (Math.abs(value) < 1e-9) return 0;
+  return value > 0 ? 1 : 2;
+}
+
+function onSegment(a, b, c) {
+  return b.x <= Math.max(a.x, c.x) + 1e-9
+    && b.x + 1e-9 >= Math.min(a.x, c.x)
+    && b.y <= Math.max(a.y, c.y) + 1e-9
+    && b.y + 1e-9 >= Math.min(a.y, c.y);
+}
+
+function segmentsIntersect(p1, q1, p2, q2) {
+  const o1 = orientation(p1, q1, p2);
+  const o2 = orientation(p1, q1, q2);
+  const o3 = orientation(p2, q2, p1);
+  const o4 = orientation(p2, q2, q1);
+
+  if (o1 !== o2 && o3 !== o4) return true;
+  if (o1 === 0 && onSegment(p1, p2, q1)) return true;
+  if (o2 === 0 && onSegment(p1, q2, q1)) return true;
+  if (o3 === 0 && onSegment(p2, p1, q2)) return true;
+  if (o4 === 0 && onSegment(p2, q1, q2)) return true;
+  return false;
+}
+
+function isSimplePolygon(polygon) {
+  const pts = getPolygonWithoutDuplicateClosure(polygon);
+  if (pts.length < 3) return false;
+  const n = pts.length;
+
+  for (let i = 0; i < n; i++) {
+    const a1 = pts[i];
+    const a2 = pts[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      const b1 = pts[j];
+      const b2 = pts[(j + 1) % n];
+
+      // Neighbor edges share a vertex and are allowed.
+      if (i === j) continue;
+      if ((i + 1) % n === j) continue;
+      if (i === (j + 1) % n) continue;
+
+      if (segmentsIntersect(a1, a2, b1, b2)) return false;
+    }
+  }
+
+  return true;
+}
+
 function isOverlapAllowed(objA, objB) {
   if (objA.type === 'wall' && objB.type === 'wall') return true;
   if (objA.type === 'opening' && objB.type === 'wall') return true;
@@ -1319,8 +1380,9 @@ function isFurnitureInsideDetectedRoom(obj, rooms) {
   const corners = getObjectCorners(obj);
 
   return rooms.some((room) => {
-    const polygon = room.polygon || [];
+    const polygon = getPolygonWithoutDuplicateClosure(room.polygon || []);
     if (polygon.length < 3) return false;
+    if (!isSimplePolygon(polygon)) return false;
     return corners.every((corner) => pointInPolygon(corner, polygon));
   });
 }
