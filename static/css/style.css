@@ -503,6 +503,95 @@ html, body {
   border: 1px solid #81c784;
 }
 
+/* Room Info Panel */
+.room-info-panel {
+  position: absolute;
+  right: 20px;
+  top: 80px;
+  width: 280px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 16px;
+  max-height: 500px;
+  overflow-y: auto;
+  z-index: 100;
+  border: 2px solid #667eea;
+}
+
+.room-info h4 {
+  margin: 12px 0 8px 0;
+  color: #333;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.room-info h4:first-child {
+  margin-top: 0;
+}
+
+.room-type {
+  font-size: 18px;
+  font-weight: bold;
+  color: #667eea;
+  margin: 8px 0;
+  padding: 8px;
+  background: #f0f2ff;
+  border-radius: 4px;
+}
+
+.confidence {
+  font-size: 12px;
+  color: #666;
+  margin: 4px 0;
+}
+
+.recommendations {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.recommendations li {
+  background: #f9f9f9;
+  padding: 8px;
+  margin: 6px 0;
+  border-radius: 4px;
+  border-left: 3px solid #667eea;
+  font-size: 12px;
+}
+
+.recommendations strong {
+  color: #333;
+  display: block;
+}
+
+.recommendations small {
+  color: #999;
+  display: block;
+  margin-top: 2px;
+}
+
+.lighting-info {
+  margin: 8px 0;
+}
+
+.lighting-toggle {
+  width: 100%;
+  padding: 8px 12px;
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.lighting-toggle:hover {
+  background: #45a049;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

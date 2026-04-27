@@ -227,3 +227,52 @@ class ProjectViewSet(viewsets.ModelViewSet):
         else:
             items = project.furniture_items.all()
             return Response(FurnitureItemSerializer(items, many=True).data)
+        
+    @action(detail=True, methods=['post'])
+    def sync_project(self, request, pk=None):
+        """Полностью заменяет стены и мебель проекта переданными данными"""
+        project = self.get_object()
+        data = request.data
+
+        # Удаляем всё существующее
+        project.walls.all().delete()
+        project.furniture_items.all().delete()
+
+        # Создаём стены
+        walls_data = data.get('walls', [])
+        for wall_data in walls_data:
+            Wall.objects.create(
+                project=project,
+                name=wall_data.get('name', 'Wall'),
+                x=wall_data.get('x', 0),
+                y=wall_data.get('y', 0),
+                width=wall_data.get('width', 100),
+                height=wall_data.get('height', 12),
+                angle=wall_data.get('angle', 0),
+                bearing=wall_data.get('bearing', False),
+                color=wall_data.get('color', '#808080'),
+                z_index=wall_data.get('z', 0),
+                visible=wall_data.get('visible', True),
+            )
+
+        # Создаём мебель
+        furniture_data = data.get('furniture', [])
+        for item_data in furniture_data:
+            FurnitureItem.objects.create(
+                project=project,
+                name=item_data.get('name', 'Item'),
+                subtype=item_data.get('subtype', 'custom'),
+                item_type=item_data.get('item_type', 'preset'),
+                x=item_data.get('x', 0),
+                y=item_data.get('y', 0),
+                z_index=item_data.get('z', 0),
+                width=item_data.get('width', 50),
+                height=item_data.get('height', 50),
+                angle=item_data.get('angle', 0),
+                color=item_data.get('color', '#888888'),
+                visible=item_data.get('visible', True),
+                locked=item_data.get('locked', False),
+                comment=item_data.get('comment', ''),
+            )
+
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
