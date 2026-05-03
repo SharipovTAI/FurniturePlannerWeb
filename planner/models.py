@@ -85,6 +85,7 @@ class FurnitureItem(models.Model):
     color = models.CharField(max_length=7, default='#888888')
     visible = models.BooleanField(default=True)
     locked = models.BooleanField(default=False)
+    ignore_overlap = models.BooleanField(default=False)  # Мебель: не считать наложение на другую мебель ошибкой
     comment = models.TextField(blank=True, null=True)  # Текстовая аннотация
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -112,6 +112,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'color': item.color,
                 'visible': item.visible,
                 'locked': item.locked,
+                'ignore_overlap': item.ignore_overlap,
                 'comment': item.comment,
             })
         
@@ -171,6 +172,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 color=item_data.get('color', '#888888'),
                 visible=item_data.get('visible', True),
                 locked=item_data.get('locked', False),
+                ignore_overlap=item_data.get('ignore_overlap', False),
                 comment=item_data.get('comment', ''),
             )
             item_map[item_data.get('id')] = item
@@ -221,6 +223,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 height=item_data.get('height', 50),
                 angle=item_data.get('angle', 0),
                 color=item_data.get('color', '#888888'),
+                ignore_overlap=item_data.get('ignore_overlap', False),
                 comment=item_data.get('comment', ''),
             )
             return Response(FurnitureItemSerializer(item).data, status=status.HTTP_201_CREATED)
@@ -272,6 +275,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 color=item_data.get('color', '#888888'),
                 visible=item_data.get('visible', True),
                 locked=item_data.get('locked', False),
+                ignore_overlap=item_data.get('ignore_overlap', False),
                 comment=item_data.get('comment', ''),
             )
 

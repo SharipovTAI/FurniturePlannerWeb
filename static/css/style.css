@@ -77,6 +77,69 @@ html, body {
   gap: 5px;
 }
 
+.header-auth {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.header-auth-logged {
+  position: relative;
+}
+
+.header-auth-name {
+  background: #4CAF50 !important;
+  border: none;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-auth-name:hover {
+  background: #45a049 !important;
+}
+
+.header-auth-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+  z-index: 30000;
+}
+
+.header-auth-dropdown button {
+  width: 100%;
+  text-align: left;
+  background: #f3f4f6 !important;
+  color: #1f2937 !important;
+  border: none;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.header-auth-dropdown button:hover {
+  background: #e5e7eb !important;
+  transform: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
 #measureToolBtn.active-tool {
   background: #ffb703;
   color: #1f2937;
@@ -167,6 +230,15 @@ html, body {
 .sidebar .item:hover {
   transform: scale(1.05);
   border-color: #333;
+}
+
+.sidebar .item.item-sprite {
+  color: #1a1a2e;
+  text-shadow:
+    0 0 4px #fff,
+    0 0 8px #fff,
+    0 1px 2px rgba(0, 0, 0, 0.35);
+  min-height: 48px;
 }
 
 .upload-btn {
@@ -403,7 +475,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 50000;
 }
 
 .modal.hidden {
@@ -417,6 +489,8 @@ html, body {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   max-width: 400px;
   width: 90%;
+  position: relative;
+  z-index: 50001;
 }
 
 .modal-content h2 {
@@ -548,6 +622,67 @@ html, body {
 
 .room-info-panel .lighting-toggle:hover {
   background: #1f6fdd;
+}
+
+.room-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 6px;
+}
+
+.room-switch-btn {
+  border: none;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #2d3b8f;
+  min-width: 32px;
+  height: 30px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.room-switch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.room-switch-label {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: #333;
+  font-weight: 600;
+}
+
+.room-conflict-alert {
+  background: #ffebee;
+  color: #b71c1c;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  border: 1px solid #ef9a9a;
+}
+
+.room-meta-free {
+  opacity: 0.9;
+  font-size: 13px;
+}
+
+.recommendations .recommendations-empty {
+  list-style: none;
+  margin-left: 0;
+  padding-left: 0;
+  color: #666;
+}
+
+.room-meta {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #555;
 }
 
 

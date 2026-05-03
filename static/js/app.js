@@ -1,29 +1,34 @@
 // Configuration
 const API_URL = '/api';
-const SNAP_DISTANCE = 15; // Distance in pixels for magnetic snapping
-const SNAP_LINE_COLOR = '#FF6B6B'; // Color of snap indication lines
+const SNAP_DISTANCE = 15;
+const SNAP_LINE_COLOR = '#FF6B6B';
+const CANVAS_CM_PER_UNIT = 1;
 let authToken = localStorage.getItem('authToken');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let currentProjectId = localStorage.getItem('currentProjectId');
 
 // Furniture and wall data
 const furnitureItems = [
-  { type: 'furniture', subtype: 'table', name: 'Table', width: 100, height: 100, color: '#8B4513' },
-  { type: 'furniture', subtype: 'chair', name: 'Chair', width: 50, height: 50, color: '#654321' },
-  { type: 'furniture', subtype: 'sofa', name: 'Sofa', width: 150, height: 150, color: '#4169E1' },
-  { type: 'furniture', subtype: 'cabinet', name: 'Cabinet', width: 80, height: 80, color: '#8B4513' },
-  { type: 'furniture', subtype: 'bed', name: 'Bed', width: 160, height: 160, color: '#FF6347' },
-  { type: 'furniture', subtype: 'lamp', name: 'Lamp', width: 30, height: 30, color: '#FFD700' },
+  { type: 'furniture', subtype: 'table', name: 'Стол', width: 100, height: 100, color: '#8B4513' },
+  { type: 'furniture', subtype: 'chair', name: 'Стул', width: 50, height: 50, color: '#654321' },
+  { type: 'furniture', subtype: 'sofa', name: 'Диван', width: 150, height: 150, color: '#4169E1' },
+  { type: 'furniture', subtype: 'cabinet', name: 'Шкаф', width: 80, height: 80, color: '#8B4513' },
+  { type: 'furniture', subtype: 'bed', name: 'Кровать', width: 80, height: 160, color: '#FF6347' },
+  { type: 'furniture', subtype: 'toilet', name: 'Унитаз', width: 45, height: 65, color: '#cfd8dc' },
+  { type: 'furniture', subtype: 'bathtub', name: 'Ванна', width: 170, height: 75, color: '#90caf9' },
+  { type: 'furniture', subtype: 'microwave', name: 'Микроволновка', width: 50, height: 35, color: '#424242' },
+  { type: 'furniture', subtype: 'stove', name: 'Плита', width: 60, height: 60, color: '#37474f' },
+  { type: 'furniture', subtype: 'lamp', name: 'Лампа', width: 30, height: 30, color: '#FFD700' },
 ];
 
 const wallItems = [
-  { type: 'wall', subtype: 'standard', name: 'Wall', width: 240, height: 12, color: '#4f4f4f' },
+  { type: 'wall', subtype: 'standard', name: 'Стена', width: 240, height: 12, color: '#4f4f4f' },
 ];
 
 const openingItems = [
   // width: size along wall; thickness is forced to wall thickness on placement
-  { type: 'opening', subtype: 'door', name: 'Door', width: 80, height: 12, color: '#2d6a4f' },
-  { type: 'opening', subtype: 'window', name: 'Window', width: 60, height: 12, color: '#1d4ed8' },
+  { type: 'opening', subtype: 'door', name: 'Дверь', width: 80, height: 12, color: '#2d6a4f' },
+  { type: 'opening', subtype: 'window', name: 'Окно', width: 60, height: 12, color: '#1d4ed8' },
 ];
 
 // App state
@@ -42,6 +47,7 @@ let appState = {
   projectName: 'Untitled Project',
   walls: [],
   detectedRooms: [],
+  selectedRoomIndex: null,
   pressedMoveKeys: new Set(),
   keyboardMoveIntervalId: null,
   isMeasureMode: false,
@@ -51,31 +57,46 @@ let appState = {
   measureLines: [],
   userProjects: [], // Список проектов пользователя
   currentProjectIndex: -1, // Индекс текущего проекта в списке
+  workspaceDirty: false,
 };
 
 // Modal state
 let authMode = 'login';
+let isAuthUIInitialized = false;
+let isCustomObjectUIInitialized = false;
 
 // Initialize
 async function init() {
   setupEventListeners();
-  setupAuthUI();
-  setupCustomObjectUI();
   renderSidebar();
-  renderCanvas();
-  loadFromLocalStorage();
-  
+
+  // При каждом открытии сайта — пустой холст, без автозагрузки проекта.
+  appState.canvasObjects = [];
+  appState.walls = [];
+  appState.projectName = 'Untitled Project';
+  const nameInput = document.getElementById('projectName');
+  if (nameInput) nameInput.value = appState.projectName;
+
+  currentProjectId = null;
+  localStorage.removeItem('currentProjectId');
+  localStorage.removeItem('currentProjectOwnerUserId');
+
+  markWorkspaceClean();
+
   if (authToken && currentUser) {
     updateAuthUI();
-    if (currentProjectId) {
-      await loadProject(currentProjectId);
-    }
-    await loadUserProjects(); // Загрузить список проектов для навигации
+    await loadUserProjects();
+  } else {
+    updateAuthUI();
   }
+  renderCanvas();
 }
 
 // =============== AUTH ===============
 function setupAuthUI() {
+  if (isAuthUIInitialized) return;
+  isAuthUIInitialized = true;
+
   const loginBtn = document.getElementById('loginBtn');
   const loginModal = document.getElementById('loginModal');
   const closeBtn = loginModal.querySelector('.close');
@@ -85,9 +106,42 @@ function setupAuthUI() {
   const authEmailInput = document.getElementById('authEmail');
 
   loginBtn.addEventListener('click', () => {
+    if (authToken && currentUser) return;
     authMode = 'login';
     loginModal.classList.remove('hidden');
   });
+
+  const userNameMenuBtn = document.getElementById('userNameMenuBtn');
+  const userMenuDropdown = document.getElementById('userMenuDropdown');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  function closeUserMenu() {
+    if (userMenuDropdown) userMenuDropdown.classList.add('hidden');
+    if (userNameMenuBtn) userNameMenuBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleUserMenu(e) {
+    if (e) e.stopPropagation();
+    if (!userMenuDropdown || !userNameMenuBtn) return;
+    const isClosed = userMenuDropdown.classList.contains('hidden');
+    userMenuDropdown.classList.toggle('hidden', !isClosed);
+    userNameMenuBtn.setAttribute('aria-expanded', isClosed ? 'true' : 'false');
+  }
+
+  if (userNameMenuBtn) {
+    userNameMenuBtn.addEventListener('click', toggleUserMenu);
+  }
+  if (userMenuDropdown) {
+    userMenuDropdown.addEventListener('click', (e) => e.stopPropagation());
+  }
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeUserMenu();
+      logout();
+    });
+  }
+  document.addEventListener('click', () => closeUserMenu());
 
   closeBtn.addEventListener('click', () => {
     loginModal.classList.add('hidden');
@@ -107,6 +161,14 @@ function setupAuthUI() {
     const email = document.getElementById('authEmail').value;
 
     try {
+      let prev = null;
+      try {
+        const prevRaw = localStorage.getItem('currentUser');
+        prev = prevRaw ? JSON.parse(prevRaw) : null;
+      } catch (_) {
+        prev = null;
+      }
+
       const endpoint = authMode === 'login' ? 'auth/login/' : 'auth/register/';
       const data = authMode === 'login' 
         ? { username, password }
@@ -118,19 +180,38 @@ function setupAuthUI() {
         body: JSON.stringify(data),
       });
 
-      if (!response.ok) throw new Error('Authentication failed');
+      if (!response.ok) {
+        let errorMessage = 'Authentication failed';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.detail || errorMessage;
+        } catch (_) {
+          // Keep default message when backend does not provide JSON.
+        }
+        throw new Error(errorMessage);
+      }
 
       const result = await response.json();
+      const newUserId = result.user_id;
+      const isDifferentUser = prev != null && String(prev.id) !== String(newUserId);
+
       authToken = result.token;
       currentUser = { id: result.user_id, username: result.username, email: result.email };
       
       localStorage.setItem('authToken', authToken);
       localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
+      if (isDifferentUser) {
+        resetLayoutForNewAccount();
+      }
+
       updateAuthUI();
       loginModal.classList.add('hidden');
       document.getElementById('authMessage').textContent = '';
       authForm.reset();
+
+      await loadCustomObjects();
+      await loadUserProjects();
     } catch (error) {
       const msg = document.getElementById('authMessage');
       msg.textContent = error.message;
@@ -141,113 +222,289 @@ function setupAuthUI() {
 
 function updateAuthUI() {
   const loginBtn = document.getElementById('loginBtn');
+  const headerAuthLogged = document.getElementById('headerAuthLogged');
+  const userNameMenuBtn = document.getElementById('userNameMenuBtn');
+  const userMenuDropdown = document.getElementById('userMenuDropdown');
+
   if (authToken && currentUser) {
-    loginBtn.textContent = `${currentUser.username}`;
-    loginBtn.style.background = '#4CAF50';
+    if (loginBtn) loginBtn.classList.add('hidden');
+    if (headerAuthLogged) headerAuthLogged.classList.remove('hidden');
+    if (userNameMenuBtn) userNameMenuBtn.textContent = currentUser.username;
+    if (userMenuDropdown) userMenuDropdown.classList.add('hidden');
+    if (userNameMenuBtn) userNameMenuBtn.setAttribute('aria-expanded', 'false');
   } else {
-    loginBtn.textContent = 'Login';
-    loginBtn.style.background = 'rgba(255, 255, 255, 0.2)';
+    if (loginBtn) {
+      loginBtn.classList.remove('hidden');
+      loginBtn.textContent = 'Login';
+    }
+    if (headerAuthLogged) headerAuthLogged.classList.add('hidden');
+    if (userMenuDropdown) userMenuDropdown.classList.add('hidden');
   }
 }
 
+function logout() {
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('currentUser');
+
+  appState.customObjects = [];
+  appState.userProjects = [];
+  appState.currentProjectIndex = -1;
+
+  resetWorkspaceState();
+  renderSidebar();
+  updateAuthUI();
+}
+
 // =============== PROJECT MANAGEMENT ===============
-async function saveProject() {
+function getNormalizedProjectName() {
+  const input = document.getElementById('projectName');
+  const raw = (input?.value ?? appState.projectName ?? '').trim();
+  return raw || 'Untitled Project';
+}
+
+function markWorkspaceClean() {
+  appState.workspaceDirty = false;
+}
+
+function rememberCurrentProjectOwner() {
+  if (currentUser && currentUser.id != null) {
+    localStorage.setItem('currentProjectOwnerUserId', String(currentUser.id));
+  }
+}
+
+function validateProjectIdForCurrentUser() {
+  if (!currentUser || !currentProjectId) return;
+  const owner = localStorage.getItem('currentProjectOwnerUserId');
+  if (owner != null && owner !== '' && String(owner) !== String(currentUser.id)) {
+    currentProjectId = null;
+    localStorage.removeItem('currentProjectId');
+    localStorage.removeItem('currentProjectOwnerUserId');
+  }
+}
+
+function resetLayoutForNewAccount() {
+  currentProjectId = null;
+  localStorage.removeItem('currentProjectId');
+  localStorage.removeItem('currentProjectOwnerUserId');
+  localStorage.removeItem('canvasObjects');
+  localStorage.removeItem('projectName');
+  appState.canvasObjects = [];
+  appState.walls = [];
+  appState.selectedObject = null;
+  appState.previewObject = null;
+  appState.placingItem = null;
+  appState.draggingObject = null;
+  appState.rotatingObject = null;
+  appState.rotationStart = null;
+  appState.detectedRooms = [];
+  appState.selectedRoomIndex = null;
+  appState.measureLines = [];
+  appState.measureStartPoint = null;
+  appState.measurePreviewEndPoint = null;
+  appState.isMeasureDeleteMode = false;
+  appState.projectName = 'Untitled Project';
+  const pn = document.getElementById('projectName');
+  if (pn) pn.value = appState.projectName;
+  appState.currentProjectIndex = -1;
+  const lightingOverlay = document.getElementById('lighting-overlay');
+  if (lightingOverlay) lightingOverlay.remove();
+  const toggleLighting = document.getElementById('toggleLighting');
+  if (toggleLighting) toggleLighting.textContent = 'Показать освещение';
+  markWorkspaceClean();
+  updateInspector();
+  renderCanvas();
+}
+
+async function confirmUnsavedBeforeLeave(actionHint) {
+  if (!appState.workspaceDirty) return true;
+  const hint = actionHint ? ` ${actionHint}` : '';
+  const wantSave = window.confirm(
+    `Есть несохранённые изменения.${hint}\n\n` +
+    'ОК — сохранить в облако и продолжить\n' +
+    'Отмена — не сохранять (далее будет подтверждение)'
+  );
+  if (wantSave) {
+    try {
+      await saveProjectToServer();
+      markWorkspaceClean();
+      await loadUserProjects();
+      return true;
+    } catch (e) {
+      alert('Не удалось сохранить: ' + e.message);
+      return false;
+    }
+  }
+  return window.confirm(
+    'Продолжить без сохранения? Изменения на холсте будут потеряны.\n\n' +
+    'ОК — да\n' +
+    'Отмена — отменить операцию'
+  );
+}
+
+function resetWorkspaceState() {
+  appState.canvasObjects = [];
+  appState.walls = [];
+  appState.selectedObject = null;
+  appState.previewObject = null;
+  appState.placingItem = null;
+  appState.draggingObject = null;
+  appState.rotatingObject = null;
+  appState.rotationStart = null;
+  appState.detectedRooms = [];
+  appState.selectedRoomIndex = null;
+  appState.measureLines = [];
+  appState.measureStartPoint = null;
+  appState.measurePreviewEndPoint = null;
+  appState.isMeasureDeleteMode = false;
+  appState.projectName = 'Untitled Project';
+  const pn = document.getElementById('projectName');
+  if (pn) pn.value = appState.projectName;
+  currentProjectId = null;
+  localStorage.removeItem('currentProjectId');
+  localStorage.removeItem('currentProjectOwnerUserId');
+  appState.currentProjectIndex = -1;
+  const lightingOverlay = document.getElementById('lighting-overlay');
+  if (lightingOverlay) lightingOverlay.remove();
+  const toggleLighting = document.getElementById('toggleLighting');
+  if (toggleLighting) toggleLighting.textContent = 'Показать освещение';
+  saveToLocalStorage({ skipDirtyMark: true });
+  markWorkspaceClean();
+  updateInspector();
+  renderCanvas();
+}
+
+async function newWorkspace() {
+  if (!(await confirmUnsavedBeforeLeave('перед созданием нового пространства'))) return;
+  resetWorkspaceState();
+}
+
+async function saveProjectToServer() {
   if (!authToken) {
-    alert('Please login to save projects');
-    return;
+    throw new Error('Войдите в аккаунт, чтобы сохранять проекты');
   }
 
-  try {
-    // 1. Получить или создать проект
-    let projectId = currentProjectId;
-    const projectData = {
-      name: appState.projectName || 'Untitled Project',
-      description: 'Furniture layout project',
-      room_width: 400,
-      room_height: 300,
-    };
+  const targetName = getNormalizedProjectName();
+  appState.projectName = targetName;
+  const projectNameInput = document.getElementById('projectName');
+  if (projectNameInput) projectNameInput.value = targetName;
 
-    if (!projectId) {
-      // Создаём новый проект
-      const createResponse = await fetch(`${API_URL}/projects/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`,
-        },
-        body: JSON.stringify(projectData),
-      });
-      if (!createResponse.ok) throw new Error('Failed to create project');
-      const newProject = await createResponse.json();
-      projectId = newProject.id;
-      currentProjectId = projectId;
-      localStorage.setItem('currentProjectId', projectId);
-    } else {
-      // Обновляем существующий (название)
-      await fetch(`${API_URL}/projects/${projectId}/`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`,
-        },
-        body: JSON.stringify(projectData),
-      });
-    }
+  const projectData = {
+    name: targetName,
+    description: 'Furniture layout project',
+    room_width: 400,
+    room_height: 300,
+  };
 
-    // 2. Подготовить данные для синхронизации: стены и мебель
-    const walls = [];
-    const furniture = [];
+  const projects = await getUserProjects();
+  const nameMatch = projects.find((p) => (p.name || '').trim() === targetName);
 
-    for (const obj of appState.canvasObjects) {
-      if (obj.type === 'wall') {
-        walls.push({
-          name: obj.name || 'Wall',
-          x: obj.x,
-          y: obj.y,
-          width: obj.width,
-          height: obj.height,
-          angle: obj.angle || 0,
-          bearing: obj.bearing || false,
-          color: obj.color,
-          z: obj.z || 0,
-          visible: obj.visible !== false,
-        });
-      } else {
-        // Мебель (включая окна, двери, лампы и т.д.)
-        furniture.push({
-          name: obj.name,
-          subtype: obj.subtype || 'furniture',
-          item_type: obj.customId ? 'custom' : 'preset',
-          x: obj.x,
-          y: obj.y,
-          z: obj.z || 0,
-          width: obj.width,
-          height: obj.height,
-          angle: obj.angle || 0,
-          color: obj.color,
-          visible: obj.visible !== false,
-          locked: obj.locked || false,
-          comment: obj.comment || '',
-        });
-      }
-    }
+  let projectId = currentProjectId ? String(currentProjectId) : null;
 
-    // 3. Отправить всё одним запросом на синхронизацию
-    const syncResponse = await fetch(`${API_URL}/projects/${projectId}/sync_project/`, {
+  if (nameMatch) {
+    projectId = String(nameMatch.id);
+    currentProjectId = projectId;
+    localStorage.setItem('currentProjectId', projectId);
+    const putResponse = await fetch(`${API_URL}/projects/${projectId}/`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Token ${authToken}`,
+      },
+      body: JSON.stringify(projectData),
+    });
+    if (!putResponse.ok) throw new Error('Не удалось обновить проект с таким именем');
+  } else if (!projectId) {
+    const createResponse = await fetch(`${API_URL}/projects/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Token ${authToken}`,
       },
-      body: JSON.stringify({ walls, furniture }),
+      body: JSON.stringify(projectData),
     });
+    if (!createResponse.ok) throw new Error('Не удалось создать проект');
+    const newProject = await createResponse.json();
+    projectId = String(newProject.id);
+    currentProjectId = projectId;
+    localStorage.setItem('currentProjectId', projectId);
+  } else {
+    const putResponse = await fetch(`${API_URL}/projects/${projectId}/`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Token ${authToken}`,
+      },
+      body: JSON.stringify(projectData),
+    });
+    if (!putResponse.ok) throw new Error('Не удалось обновить проект');
+  }
 
-    if (!syncResponse.ok) throw new Error('Failed to sync project data');
+  const walls = [];
+  const furniture = [];
 
-    alert('Project saved successfully!');
+  for (const obj of appState.canvasObjects) {
+    if (obj.type === 'wall') {
+      walls.push({
+        name: obj.name || 'Wall',
+        x: obj.x,
+        y: obj.y,
+        width: obj.width,
+        height: obj.height,
+        angle: obj.angle || 0,
+        bearing: obj.bearing || false,
+        color: obj.color,
+        z: obj.z || 0,
+        visible: obj.visible !== false,
+      });
+    } else {
+      furniture.push({
+        name: obj.name,
+        subtype: obj.subtype || 'furniture',
+        item_type: obj.customId ? 'custom' : 'preset',
+        x: obj.x,
+        y: obj.y,
+        z: obj.z || 0,
+        width: obj.width,
+        height: obj.height,
+        angle: obj.angle || 0,
+        color: obj.color,
+        visible: obj.visible !== false,
+        locked: obj.locked || false,
+        ignore_overlap: !!obj.ignoreOverlap,
+        comment: obj.comment || '',
+      });
+    }
+  }
+
+  const syncResponse = await fetch(`${API_URL}/projects/${projectId}/sync_project/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Token ${authToken}`,
+    },
+    body: JSON.stringify({ walls, furniture }),
+  });
+
+  if (!syncResponse.ok) throw new Error('Не удалось синхронизировать данные проекта');
+
+  rememberCurrentProjectOwner();
+}
+
+async function saveProject() {
+  if (!authToken) {
+    alert('Войдите в аккаунт, чтобы сохранять проекты');
+    return;
+  }
+  try {
+    await saveProjectToServer();
+    markWorkspaceClean();
+    await loadUserProjects();
+    alert('Проект сохранён');
   } catch (error) {
     console.error('Error saving project:', error);
-    alert('Error saving project: ' + error.message);
+    alert('Ошибка сохранения: ' + error.message);
   }
 }
 
@@ -300,8 +557,47 @@ async function downloadProject() {
   }
 }
 
+function restoreOpeningFromSavedItem(item, clientId) {
+  const walls = appState.canvasObjects.filter(o => o.type === 'wall');
+  if (!walls.length) return null;
+
+  const openingItem = {
+    type: 'opening',
+    subtype: item.subtype,
+    name: item.name,
+    width: item.width,
+    height: item.height,
+    color: item.color || '#888888',
+  };
+
+  let best = null;
+  for (const wall of walls) {
+    const local = worldToWallLocal(wall, item.x, item.y);
+    const halfLen = wall.width / 2;
+    const halfTh = wall.height / 2;
+    const onSegment = Math.abs(local.x) <= halfLen + 25;
+    const nearLine = Math.abs(local.y) <= Math.max(halfTh + 15, 30);
+    if (onSegment && nearLine) {
+      const score = Math.abs(local.y) + Math.max(0, Math.abs(local.x) - halfLen) * 2;
+      if (!best || score < best.score) best = { wall, localX: local.x, score };
+    }
+  }
+  if (!best) return null;
+
+  const halfWall = best.wall.width / 2;
+  const halfOpening = (Number(item.width) || 60) / 2;
+  const wallOffset = clamp(best.localX, -halfWall + halfOpening, halfWall - halfOpening);
+  const created = createOpeningOnWall(openingItem, best.wall, wallOffset);
+  created.id = clientId;
+  created.visible = item.visible !== false;
+  created.locked = !!item.locked;
+  created.comment = item.comment || '';
+  if (item.z_index != null) created.z = item.z_index;
+  return created;
+}
+
 async function loadProject(projectId) {
-  if (!authToken) return;
+  if (!authToken) return false;
 
   try {
     const response = await fetch(`${API_URL}/projects/${projectId}/`, {
@@ -310,6 +606,9 @@ async function loadProject(projectId) {
       },
     });
 
+    if (response.status === 404) {
+      throw new Error('Проект не найден или у вас нет к нему доступа');
+    }
     if (!response.ok) throw new Error('Failed to load project');
     const project = await response.json();
 
@@ -318,36 +617,67 @@ async function loadProject(projectId) {
     appState.canvasObjects = [];
     appState.walls = [];
 
-    // Load furniture items
-    for (const item of project.furniture_items) {
+    // Стены с сервера лежат в project.walls; канвас использует только canvasObjects.
+    for (const wall of project.walls || []) {
       appState.canvasObjects.push({
-        id: item.id,
+        id: `w_${wall.id}`,
+        type: 'wall',
+        name: wall.name || 'Wall',
+        x: wall.x,
+        y: wall.y,
+        width: wall.width,
+        height: wall.height,
+        angle: wall.angle ?? 0,
+        bearing: !!wall.bearing,
+        color: wall.color || '#4f4f4f',
+        z: wall.z_index ?? 0,
+        visible: wall.visible !== false,
+        locked: false,
+      });
+    }
+
+    for (const item of project.furniture_items || []) {
+      const clientId = `i_${item.id}`;
+      const isOpening = item.subtype === 'door' || item.subtype === 'window';
+      if (isOpening) {
+        const restored = restoreOpeningFromSavedItem(item, clientId);
+        if (restored) {
+          appState.canvasObjects.push(restored);
+          continue;
+        }
+      }
+      appState.canvasObjects.push({
+        id: clientId,
         name: item.name,
         subtype: item.subtype,
-        type: item.item_type === 'wall' ? 'wall' : 'furniture',
+        type: 'furniture',
         x: item.x,
         y: item.y,
-        z: item.z_index,
+        z: item.z_index ?? 0,
         width: item.width,
         height: item.height,
-        angle: item.angle,
+        angle: item.angle ?? 0,
         color: item.color,
-        visible: item.visible,
-        locked: item.locked,
+        visible: item.visible !== false,
+        locked: !!item.locked,
+        ignoreOverlap: !!item.ignore_overlap,
         comment: item.comment || '',
         customId: item.custom_object?.id,
       });
     }
 
-    // Load walls
-    for (const wall of project.walls) {
-      appState.walls.push(wall);
-    }
-
-    saveToLocalStorage();
+    currentProjectId = String(project.id);
+    localStorage.setItem('currentProjectId', currentProjectId);
+    rememberCurrentProjectOwner();
+    saveToLocalStorage({ skipDirtyMark: true });
+    markWorkspaceClean();
     renderCanvas();
+    await loadUserProjects();
+    return true;
   } catch (error) {
     console.error('Error loading project:', error);
+    alert(error.message || 'Не удалось загрузить проект');
+    return false;
   }
 }
 
@@ -355,7 +685,8 @@ async function loadUserProjects() {
   appState.userProjects = await getUserProjects();
   // Найти индекс текущего проекта
   if (currentProjectId) {
-    appState.currentProjectIndex = appState.userProjects.findIndex(p => p.id === currentProjectId);
+    const cid = String(currentProjectId);
+    appState.currentProjectIndex = appState.userProjects.findIndex(p => String(p.id) === cid);
   } else {
     appState.currentProjectIndex = -1;
   }
@@ -365,10 +696,12 @@ async function switchToProject(index) {
   if (index < 0 || index >= appState.userProjects.length) return;
   
   const project = appState.userProjects[index];
-  appState.currentProjectIndex = index;
-  currentProjectId = project.id;
-  localStorage.setItem('currentProjectId', currentProjectId);
-  await loadProject(project.id);
+  if (String(project.id) === String(currentProjectId)) return;
+
+  if (!(await confirmUnsavedBeforeLeave(`перед открытием проекта «${project.name}»`))) return;
+
+  const ok = await loadProject(project.id);
+  if (ok) appState.currentProjectIndex = index;
 }
 
 async function showProjectList() {
@@ -406,6 +739,9 @@ async function nextProject() {
 
 // =============== CUSTOM OBJECTS ===============
 async function setupCustomObjectUI() {
+  if (isCustomObjectUIInitialized) return;
+  isCustomObjectUIInitialized = true;
+
   const uploadBtn = document.getElementById('uploadCustomBtn');
   const uploadModal = document.getElementById('uploadModal');
   const closeBtn = uploadModal.querySelector('.close');
@@ -521,9 +857,14 @@ function renderSidebar() {
 function createSidebarItem(item) {
   const el = document.createElement('div');
   el.className = 'item';
-  el.style.backgroundColor = item.color;
   el.draggable = item.type !== 'opening';
   el.textContent = item.name;
+  if (window.FurniturePlannerSprites) {
+    window.FurniturePlannerSprites.styleSidebarThumb(el, item);
+    if (item.type !== 'wall') el.classList.add('item-sprite');
+  } else {
+    el.style.backgroundColor = item.color;
+  }
 
   if (item.type === 'opening') {
     el.addEventListener('mousedown', (e) => startPlacingOpeningFromSidebar(e, item));
@@ -568,7 +909,21 @@ function handleSidebarDragStart(e, item) {
   dragPreview.style.fontWeight = 'bold';
   dragPreview.style.fontSize = '12px';
   dragPreview.style.padding = '4px';
-  dragPreview.textContent = item.name;
+  if (item.type === 'wall') {
+    dragPreview.style.backgroundColor = item.color;
+    dragPreview.textContent = item.name;
+    dragPreview.style.color = 'white';
+  } else {
+    dragPreview.textContent = '';
+    dragPreview.style.color = 'transparent';
+    if (window.FurniturePlannerSprites) {
+      window.FurniturePlannerSprites.styleDragGhost(dragPreview, item);
+    } else {
+      dragPreview.style.backgroundColor = item.color;
+      dragPreview.textContent = item.name;
+      dragPreview.style.color = 'white';
+    }
+  }
   document.body.appendChild(dragPreview);
   e.dataTransfer.setDragImage(dragPreview, dimensions.width / 2, dimensions.height / 2);
   e.target._dragPreviewEl = dragPreview;
@@ -728,13 +1083,14 @@ function handleCanvasClick(e) {
   if (appState.isMeasureMode || e.target !== document.getElementById('canvas')) return;
 
   const point = getCanvasPointerPosition(e);
-  const room = getRoomAtPoint(point);
-  
-  if (room) {
+  const roomIndex = getRoomIndexAtPoint(point);
+
+  if (roomIndex >= 0) {
     // Clear selection and update room info for clicked room
     appState.selectedObject = null;
+    appState.selectedRoomIndex = roomIndex;
     updateInspector();
-    updateRoomInfoPanel(room);
+    updateRoomInfoPanel(roomIndex);
   } else {
     // Clicked outside any room - show overall info
     updateRoomInfoPanel();
@@ -905,6 +1261,7 @@ function handleCanvasDrop(e) {
       width: dimensions.width,
       height: dimensions.height,
       locked: false,
+      ignoreOverlap: false,
       customId: item.customId,
     };
 
@@ -1209,6 +1566,10 @@ function checkWallSnapping(draggedWall) {
 
 // =============== ROOM DETECTION ===============
 function detectRooms() {
+  const previousSelectedRoom = Number.isInteger(appState.selectedRoomIndex)
+    ? appState.detectedRooms?.[appState.selectedRoomIndex]
+    : null;
+  const previousSignature = previousSelectedRoom ? getRoomSignature(previousSelectedRoom) : null;
   const rooms = [];
   const walls = appState.canvasObjects.filter(obj => obj.type === 'wall');
   
@@ -1299,7 +1660,35 @@ function detectRooms() {
   }
   
   appState.detectedRooms = rooms;
+  syncSelectedRoom(previousSignature);
   return rooms;
+}
+
+function getRoomSignature(room) {
+  if (!room || !Array.isArray(room.walls)) return '';
+  return room.walls.map(w => String(w.id)).sort().join('|');
+}
+
+function syncSelectedRoom(preferredSignature = null) {
+  const rooms = appState.detectedRooms || [];
+  if (rooms.length === 0) {
+    appState.selectedRoomIndex = null;
+    return;
+  }
+
+  if (preferredSignature) {
+    const matchedIndex = rooms.findIndex(room => getRoomSignature(room) === preferredSignature);
+    if (matchedIndex >= 0) {
+      appState.selectedRoomIndex = matchedIndex;
+      return;
+    }
+  }
+
+  if (!Number.isInteger(appState.selectedRoomIndex)
+    || appState.selectedRoomIndex < 0
+    || appState.selectedRoomIndex >= rooms.length) {
+    appState.selectedRoomIndex = 0;
+  }
 }
 
 function calculatePolygonArea(points) {
@@ -1365,6 +1754,15 @@ function getRoomAtPoint(point) {
   return null;
 }
 
+function getRoomIndexAtPoint(point) {
+  for (let i = 0; i < appState.detectedRooms.length; i++) {
+    if (isPointInPolygon(point, appState.detectedRooms[i].polygon)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function getFurnitureInRoom(room) {
   if (!room) return [];
   
@@ -1374,6 +1772,25 @@ function getFurnitureInRoom(room) {
     // Check if object center is inside room polygon
     return isPointInPolygon({ x: obj.x, y: obj.y }, room.polygon);
   });
+}
+
+function sortFurnitureByPlacementOrder(a, b) {
+  return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+}
+
+function getFurnitureFootprintAreaCanvasUnits(obj) {
+  const w = Number(obj.width) || 0;
+  const h = Number(obj.height) || 0;
+  return w * h;
+}
+
+function getOccupiedFurnitureAreaInRoom(room) {
+  return getFurnitureInRoom(room).reduce((sum, f) => sum + getFurnitureFootprintAreaCanvasUnits(f), 0);
+}
+
+function canvasAreaToCm2(areaCanvasUnits) {
+  const k = CANVAS_CM_PER_UNIT;
+  return (Number(areaCanvasUnits) || 0) * k * k;
 }
 
 function polygonsOverlap(polyA, polyB) {
@@ -1500,6 +1917,12 @@ function isOverlapAllowed(objA, objB) {
   return false;
 }
 
+/** Две единицы мебели без ошибки пересечения, если у любой включено «Без коллизий». */
+function furnitureOverlapIgnoredPair(objA, objB) {
+  if (objA.type !== 'furniture' || objB.type !== 'furniture') return false;
+  return !!(objA.ignoreOverlap || objB.ignoreOverlap);
+}
+
 function isFurnitureInsideDetectedRoom(obj, rooms) {
   if (!rooms || rooms.length === 0) return false;
   const corners = getObjectCorners(obj);
@@ -1517,6 +1940,7 @@ function hasInvalidOverlap(targetObj, allObjects) {
   for (const other of allObjects) {
     if (other.id === targetObj.id) continue;
     if (isOverlapAllowed(targetObj, other)) continue;
+    if (furnitureOverlapIgnoredPair(targetObj, other)) continue;
     const otherCorners = getObjectCorners(other);
     if (polygonsOverlap(targetCorners, otherCorners)) {
       return true;
@@ -1559,15 +1983,18 @@ function renderCanvas() {
     appState.detectedRooms.forEach((room, index) => {
       const colors = ['#949494', '#e3f2fd', '#fff3e0', '#fce4ec', '#f3e5f5'];
       if (room.polygon && room.polygon.length >= 3) {
+        const inRoom = getFurnitureInRoom(room);
+        const roomSpec = classifyRoomBySpecialFurniture(inRoom);
+        const conflict = roomSpec.conflict;
         const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
         const pts = room.polygon
           .map(p => `${Math.round(p.x)},${Math.round(p.y)}`)
           .join(' ');
         poly.setAttribute('points', pts);
-        poly.setAttribute('fill', colors[index % colors.length]);
-        poly.setAttribute('fill-opacity', '0.25');
-        poly.setAttribute('stroke', '#999');
-        poly.setAttribute('stroke-width', '2');
+        poly.setAttribute('fill', conflict ? '#ffcdd2' : colors[index % colors.length]);
+        poly.setAttribute('fill-opacity', conflict ? '0.35' : '0.25');
+        poly.setAttribute('stroke', conflict ? '#d32f2f' : '#999');
+        poly.setAttribute('stroke-width', conflict ? '3' : '2');
         poly.setAttribute('stroke-dasharray', '5,5');
         svg.appendChild(poly);
       }
@@ -1588,7 +2015,9 @@ function renderCanvas() {
     if (pa !== pb) return pa - pb;
     const za = Number(a.z) || 0;
     const zb = Number(b.z) || 0;
-    return za - zb;
+    if (za !== zb) return za - zb;
+    const idCmp = String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+    return idCmp;
   });
 
   const draggingObj = appState.draggingObject
@@ -1615,17 +2044,32 @@ function renderCanvas() {
     el.style.top = `${obj.y - obj.height / 2}px`;
     el.style.width = `${obj.width}px`;
     el.style.height = `${obj.height}px`;
-    el.style.backgroundColor = obj.color;
     el.style.border = '2px solid #333';
     el.style.borderRadius = '4px';
     el.style.display = 'flex';
     el.style.alignItems = 'center';
     el.style.justifyContent = 'center';
-    el.style.color = 'white';
     el.style.fontSize = '12px';
     el.style.fontWeight = 'bold';
     el.style.cursor = obj.locked ? 'not-allowed' : appState.draggingObject === obj.id ? 'grabbing' : 'grab';
     el.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+    if (obj.type === 'wall') {
+      el.style.backgroundColor = obj.color;
+      el.style.backgroundImage = 'none';
+      el.style.color = 'white';
+      el.textContent = '';
+    } else {
+      el.style.color = 'transparent';
+      el.textContent = '';
+      el.title = obj.name || '';
+      if (window.FurniturePlannerSprites) {
+        window.FurniturePlannerSprites.styleCanvasElement(el, obj, {});
+      } else {
+        el.style.backgroundColor = obj.color;
+        el.style.color = 'white';
+        el.textContent = obj.name;
+      }
+    }
     const zInt = Math.round(Number(obj.z) || 0);
 
     if (draggingWallId && obj.type === 'opening' && obj.wallId === draggingWallId) {
@@ -1644,7 +2088,6 @@ function renderCanvas() {
     el.style.opacity = obj.visible ? 1 : 0.5;
     el.style.transform = `rotate(${obj.angle || 0}deg)`;
     el.style.transformOrigin = 'center center';
-    el.textContent = obj.name;
 
     if (appState.selectedObject?.id === obj.id) {
       el.style.border = '3px solid #007bff';
@@ -1683,13 +2126,11 @@ function renderCanvas() {
     el.style.top = `${preview.y - preview.height / 2}px`;
     el.style.width = `${preview.width}px`;
     el.style.height = `${preview.height}px`;
-    el.style.backgroundColor = preview.color;
     el.style.border = '2px dashed #333';
     el.style.borderRadius = '4px';
     el.style.display = 'flex';
     el.style.alignItems = 'center';
     el.style.justifyContent = 'center';
-    el.style.color = 'white';
     el.style.fontSize = '12px';
     el.style.fontWeight = 'bold';
     el.style.opacity = '0.7';
@@ -1697,6 +2138,18 @@ function renderCanvas() {
     el.style.transform = `rotate(${preview.angle || 0}deg)`;
     el.style.transformOrigin = 'center center';
     el.style.zIndex = 9000;
+    el.textContent = '';
+    el.title = preview.name || '';
+    if (preview.type === 'wall') {
+      el.style.backgroundColor = preview.color;
+      el.style.backgroundImage = 'none';
+    } else if (window.FurniturePlannerSprites) {
+      window.FurniturePlannerSprites.styleCanvasElement(el, preview, { preview: true });
+    } else {
+      el.style.backgroundColor = preview.color;
+      el.style.color = 'white';
+      el.textContent = preview.name;
+    }
     if (preview.type === 'opening' && preview._previewAttachedToWall === false) {
       el.style.opacity = '0.35';
       el.style.borderColor = '#c62828';
@@ -1706,7 +2159,6 @@ function renderCanvas() {
       el.style.opacity = '0.5';
       el.style.boxShadow = '0 0 0 2px rgba(211, 47, 47, 0.35)';
     }
-    el.textContent = preview.name;
     canvas.appendChild(el);
   }
 
@@ -1725,8 +2177,6 @@ function renderCanvas() {
     overlay.style.pointerEvents = 'none';
     overlay.style.zIndex = '20000';
 
-    const CM_PER_PIXEL = 1;
-
     const makePoint = (x, y) => {
       const p = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
       p.setAttribute('cx', x);
@@ -1741,7 +2191,7 @@ function renderCanvas() {
     for (const lineToDraw of linesToDraw) {
       const dx = lineToDraw.end.x - lineToDraw.start.x;
       const dy = lineToDraw.end.y - lineToDraw.start.y;
-      const distanceCm = Math.hypot(dx, dy) * CM_PER_PIXEL;
+      const distanceCm = Math.hypot(dx, dy) * CANVAS_CM_PER_UNIT;
       const midX = (lineToDraw.start.x + lineToDraw.end.x) / 2;
       const midY = (lineToDraw.start.y + lineToDraw.end.y) / 2;
 
@@ -1861,6 +2311,7 @@ function updateInspector() {
   const fieldBearing = document.getElementById('field-bearing');
   const fieldVisible = document.getElementById('field-visible');
   const fieldLocked = document.getElementById('field-locked');
+  const fieldIgnoreOverlap = document.getElementById('field-ignore-overlap');
   const fieldComment = document.getElementById('field-comment');
   const previewBox = document.getElementById('preview-box');
   const btnDelete = document.getElementById('btn-delete');
@@ -1878,6 +2329,10 @@ function updateInspector() {
     fieldBearing.checked = false;
     fieldVisible.checked = true;
     fieldLocked.checked = false;
+    if (fieldIgnoreOverlap) {
+      fieldIgnoreOverlap.checked = false;
+      fieldIgnoreOverlap.disabled = true;
+    }
     fieldComment.value = '';
     previewBox.style.backgroundColor = '#f8f9ff';
     fieldX.disabled = true;
@@ -1909,6 +2364,11 @@ function updateInspector() {
   fieldBearing.checked = obj.bearing || false;
   fieldVisible.checked = obj.visible !== false;
   fieldLocked.checked = obj.locked || false;
+  if (fieldIgnoreOverlap) {
+    const isFurniture = obj.type === 'furniture';
+    fieldIgnoreOverlap.disabled = !isFurniture;
+    fieldIgnoreOverlap.checked = isFurniture ? !!obj.ignoreOverlap : false;
+  }
   fieldComment.value = obj.comment || '';
   previewBox.style.backgroundColor = obj.color;
   
@@ -1944,6 +2404,7 @@ function setupInspectorEventListeners() {
   const fieldBearing = document.getElementById('field-bearing');
   const fieldVisible = document.getElementById('field-visible');
   const fieldLocked = document.getElementById('field-locked');
+  const fieldIgnoreOverlap = document.getElementById('field-ignore-overlap');
   const fieldComment = document.getElementById('field-comment');
   const btnDelete = document.getElementById('btn-delete');
   const btnVisibility = document.getElementById('btn-visibility');
@@ -1965,6 +2426,7 @@ function setupInspectorEventListeners() {
         case 'bearing': obj.bearing = fieldBearing?.checked; break;
         case 'visible': obj.visible = fieldVisible?.checked; break;
         case 'locked': obj.locked = fieldLocked?.checked; break;
+        case 'ignoreOverlap': if (obj.type === 'furniture') obj.ignoreOverlap = fieldIgnoreOverlap?.checked; break;
         case 'comment': obj.comment = fieldComment?.value; break;
       }
 
@@ -1981,6 +2443,7 @@ function setupInspectorEventListeners() {
   if (fieldBearing) fieldBearing.addEventListener('change', updateField('bearing'));
   if (fieldVisible) fieldVisible.addEventListener('change', updateField('visible'));
   if (fieldLocked) fieldLocked.addEventListener('change', updateField('locked'));
+  if (fieldIgnoreOverlap) fieldIgnoreOverlap.addEventListener('change', updateField('ignoreOverlap'));
   if (fieldComment) fieldComment.addEventListener('change', updateField('comment'));
 
   btnDelete.addEventListener('click', () => {
@@ -2014,14 +2477,67 @@ function setupInspectorEventListeners() {
 }
 
 
-// =============== ROOM TYPE DETECTION ===============
-function detectRoomType(furniture = null) {
-  const furnitureList = furniture || appState.canvasObjects.filter(obj => obj.type === 'furniture');
-  const subtypes = furnitureList.map(f => f.subtype.toLowerCase());
-  
-  // Count furniture types
+// =============== ROOM TYPE (спец-объекты) ===============
+const SPECIAL_ROOM_CATEGORY_LABEL = {
+  bedroom: 'Спальня',
+  bathroom: 'Санузел',
+  kitchen: 'Кухня',
+};
+
+/** Подсказки для разрешения конфликта типов (что оставить / что убрать). */
+const SPECIAL_CATEGORY_RESOLVE_HINT = {
+  bedroom: { label: 'Спальня', keep: 'кровать' },
+  bathroom: { label: 'Санузел', keep: 'унитаз и/или ванну' },
+  kitchen: { label: 'Кухня', keep: 'плиту и/или микроволновку' },
+};
+
+function getConflictResolutionRecommendationItems(categoryKeys) {
+  const keys = [...categoryKeys];
+  const order = ['bedroom', 'bathroom', 'kitchen'];
+  keys.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return keys.map((target) => {
+    const hint = SPECIAL_CATEGORY_RESOLVE_HINT[target];
+    const otherLabels = keys.filter(k => k !== target).map(k => SPECIAL_ROOM_CATEGORY_LABEL[k]);
+    let removePhrase;
+    if (otherLabels.length === 1) {
+      removePhrase = `уберите спец-объекты категории «${otherLabels[0]}»`;
+    } else if (otherLabels.length === 2) {
+      removePhrase = `уберите спец-объекты категорий «${otherLabels[0]}» и «${otherLabels[1]}»`;
+    } else {
+      removePhrase = 'уберите лишние спец-объекты';
+    }
+    return {
+      name: `Оставить только «${hint.label}»`,
+      reason: `Оставьте в комнате ${hint.keep}; ${removePhrase}.`,
+    };
+  });
+}
+
+function getSpecialRoomCategoryKey(subtype) {
+  const s = String(subtype || '').toLowerCase();
+  if (s === 'bed') return 'bedroom';
+  if (s === 'toilet' || s === 'bathtub') return 'bathroom';
+  if (s === 'microwave' || s === 'stove') return 'kitchen';
+  return null;
+}
+
+/**
+ * Тип комнаты по спец-объектам: при нескольких несовместимых категориях — конфликт.
+ * Порядок «первого» объекта — по id (порядок добавления в типичном случае).
+ */
+function classifyRoomBySpecialFurniture(furnitureList) {
+  const list = furnitureList ? [...furnitureList] : [];
+  const specials = list
+    .filter(f => f.type === 'furniture' && getSpecialRoomCategoryKey(f.subtype))
+    .sort(sortFurnitureByPlacementOrder);
+
+  const subtypes = list.map(f => String(f.subtype || '').toLowerCase());
   const counts = {
     bed: subtypes.filter(s => s === 'bed').length,
+    toilet: subtypes.filter(s => s === 'toilet').length,
+    bathtub: subtypes.filter(s => s === 'bathtub').length,
+    microwave: subtypes.filter(s => s === 'microwave').length,
+    stove: subtypes.filter(s => s === 'stove').length,
     sofa: subtypes.filter(s => s === 'sofa').length,
     table: subtypes.filter(s => s === 'table').length,
     chair: subtypes.filter(s => s === 'chair').length,
@@ -2029,31 +2545,52 @@ function detectRoomType(furniture = null) {
     lamp: subtypes.filter(s => s === 'lamp').length,
   };
 
-  let roomType = 'Empty';
-  let confidence = 0;
-
-  // Detection logic
-  if (counts.bed >= 1) {
-    roomType = 'Спальня';
-    confidence = 0.9;
-  } else if (counts.sofa >= 1 && counts.table >= 1) {
-    roomType = 'Гостиная';
-    confidence = 0.85;
-  } else if (counts.table >= 1 && counts.chair >= 2) {
-    roomType = 'Кухня';
-    confidence = 0.75;
-  } else if (counts.table >= 1 && counts.chair >= 1 && counts.sofa === 0) {
-    roomType = 'Кабинет';
-    confidence = 0.7;
-  } else if (counts.cabinet >= 2) {
-    roomType = 'Гардероб';
-    confidence = 0.65;
-  } else if (furnitureList.length > 0) {
-    roomType = 'Неизвестная';
-    confidence = 0.3;
+  if (specials.length === 0) {
+    if (list.length === 0) {
+      return {
+        type: 'Empty',
+        confidence: 0,
+        conflict: false,
+        conflictMessage: '',
+        conflictCategories: [],
+        counts,
+        firstCategoryKey: null,
+      };
+    }
+    return {
+      type: 'Неизвестная',
+      confidence: 0.3,
+      conflict: false,
+      conflictMessage: '',
+      conflictCategories: [],
+      counts,
+      firstCategoryKey: null,
+    };
   }
 
-  return { type: roomType, confidence, counts };
+  const categoryKeys = [...new Set(specials.map(f => getSpecialRoomCategoryKey(f.subtype)))];
+  if (categoryKeys.length > 1) {
+    return {
+      type: 'Конфликт',
+      confidence: 0,
+      conflict: true,
+      conflictMessage: 'Несовместимые объекты',
+      conflictCategories: categoryKeys,
+      counts,
+      firstCategoryKey: getSpecialRoomCategoryKey(specials[0].subtype),
+    };
+  }
+
+  const cat = categoryKeys[0];
+  return {
+    type: SPECIAL_ROOM_CATEGORY_LABEL[cat],
+    confidence: 0.9,
+    conflict: false,
+    conflictMessage: '',
+    conflictCategories: [],
+    counts,
+    firstCategoryKey: cat,
+  };
 }
 
 // =============== FURNITURE RECOMMENDATIONS ===============
@@ -2064,25 +2601,25 @@ function getFurnitureRecommendations(roomType) {
       { name: 'Лампа', subtype: 'lamp', reason: 'Для освещения' },
       { name: 'Стол', subtype: 'table', reason: 'Туалетный столик' },
     ],
-    'Гостиная': [
-      { name: 'Шкаф', subtype: 'cabinet', reason: 'Для ТВ и декора' },
-      { name: 'Лампа', subtype: 'lamp', reason: 'Дополнительное освещение' },
-      { name: 'Стул', subtype: 'chair', reason: 'Дополнительные места' },
+    'Санузел': [
+      { name: 'Шкаф', subtype: 'cabinet', reason: 'Для полотенец и средств' },
+      { name: 'Лампа', subtype: 'lamp', reason: 'Освещение' },
     ],
     'Кухня': [
-      { name: 'Кабинет', subtype: 'cabinet', reason: 'Для посуды и продуктов' },
-      { name: 'Лампа', subtype: 'lamp', reason: 'Освещение рабочей зоны' },
+      { name: 'Шкаф', subtype: 'cabinet', reason: 'Хранение посуды и продуктов' },
+      { name: 'Стол', subtype: 'table', reason: 'Обеденная зона' },
+      { name: 'Стул', subtype: 'chair', reason: 'Посадочные места' },
     ],
-    'Кабинет': [
-      { name: 'Шкаф', subtype: 'cabinet', reason: 'Для документов и книг' },
-      { name: 'Лампа', subtype: 'lamp', reason: 'Для работы' },
-      { name: 'Кресло', subtype: 'chair', reason: 'Удобство' },
+    'Неизвестная': [
+      { name: 'Стол', subtype: 'table', reason: 'Базовая планировка' },
+      { name: 'Стул', subtype: 'chair', reason: 'Для сидения' },
     ],
     'Empty': [
       { name: 'Стол', subtype: 'table', reason: 'Основная мебель' },
       { name: 'Стул', subtype: 'chair', reason: 'Для сидения' },
-      { name: 'Кровать', subtype: 'bed', reason: 'Для сна' },
+      { name: 'Кровать', subtype: 'bed', reason: 'Спальня' },
     ],
+    'Конфликт': [],
   };
 
   return recommendations[roomType] || [];
@@ -2296,8 +2833,29 @@ function createStandardRoom(width, height) {
 }
 // =============== UI UPDATES ===============
 function updateRoomInfoPanel(room = null) {
-  const furniture = room ? getFurnitureInRoom(room) : null;
-  const roomInfo = detectRoomType(furniture);
+  const rooms = appState.detectedRooms || [];
+  let activeRoomIndex = Number.isInteger(appState.selectedRoomIndex) ? appState.selectedRoomIndex : null;
+
+  if (Number.isInteger(room)) {
+    activeRoomIndex = room;
+  } else if (room && typeof room === 'object') {
+    const objectRoomIndex = rooms.indexOf(room);
+    if (objectRoomIndex >= 0) activeRoomIndex = objectRoomIndex;
+  }
+
+  if (rooms.length > 0) {
+    if (!Number.isInteger(activeRoomIndex) || activeRoomIndex < 0 || activeRoomIndex >= rooms.length) {
+      activeRoomIndex = 0;
+    }
+    appState.selectedRoomIndex = activeRoomIndex;
+  } else {
+    activeRoomIndex = null;
+    appState.selectedRoomIndex = null;
+  }
+
+  const activeRoom = Number.isInteger(activeRoomIndex) ? rooms[activeRoomIndex] : null;
+  const furniture = activeRoom ? getFurnitureInRoom(activeRoom) : [];
+  const roomInfo = classifyRoomBySpecialFurniture(furniture);
   const infoPanelSelector = '#room-info-panel';
   
   if (!document.querySelector(infoPanelSelector)) {
@@ -2309,13 +2867,61 @@ function updateRoomInfoPanel(room = null) {
   }
   
   const panel = document.querySelector(infoPanelSelector);
-  const recommendations = getFurnitureRecommendations(roomInfo.type);
+  let recommendationsMarkup;
+  if (roomInfo.conflict && roomInfo.conflictCategories && roomInfo.conflictCategories.length > 1) {
+    const conflictRecs = getConflictResolutionRecommendationItems(roomInfo.conflictCategories);
+    recommendationsMarkup = conflictRecs.map(r => `
+    <li>
+      <strong>${r.name}</strong>
+      <br><small>${r.reason}</small>
+    </li>
+  `).join('');
+  } else {
+    const recommendations = getFurnitureRecommendations(roomInfo.type);
+    recommendationsMarkup = recommendations.length
+      ? recommendations.map(r => `
+    <li>
+      <strong>${r.name}</strong>
+      <br><small>${r.reason}</small>
+    </li>
+  `).join('')
+      : '<li class="recommendations-empty"><small>Нет рекомендаций для этого состояния.</small></li>';
+  }
+
+  const totalCm2 = activeRoom ? canvasAreaToCm2(activeRoom.area || 0) : 0;
+  const occupiedCanvas = activeRoom ? getOccupiedFurnitureAreaInRoom(activeRoom) : 0;
+  const occupiedCm2 = canvasAreaToCm2(occupiedCanvas);
+  const freeCm2 = Math.max(0, totalCm2 - occupiedCm2);
+
+  const roomSwitcherMarkup = rooms.length > 0
+    ? `
+      <div class="room-switcher">
+        <button id="roomPrevBtn" class="room-switch-btn" ${rooms.length < 2 ? 'disabled' : ''}>←</button>
+        <span class="room-switch-label">Комната ${activeRoomIndex + 1} из ${rooms.length}</span>
+        <button id="roomNextBtn" class="room-switch-btn" ${rooms.length < 2 ? 'disabled' : ''}>→</button>
+      </div>
+      <p class="room-meta">Площадь: ${Math.round(totalCm2)} см²</p>
+      <p class="room-meta room-meta-free">Свободно (оценка): ${Math.round(freeCm2)} см²</p>
+    `
+    : '<p class="room-meta">Замкнутых комнат пока нет. Замкните стены, и комната появится автоматически.</p>';
+
+  const conflictMarkup = roomInfo.conflict && roomInfo.conflictMessage
+    ? `<div class="room-conflict-alert" role="alert">${roomInfo.conflictMessage}</div>`
+    : '';
+
+  const confidenceMarkup = roomInfo.conflict
+    ? ''
+    : `<p class="confidence">Уверенность: ${Math.round(roomInfo.confidence * 100)}%</p>`;
   
   panel.innerHTML = `
     <div class="room-info">
+      <h4>📍 Текущая комната</h4>
+      ${roomSwitcherMarkup}
+
       <h4>🏠 Тип комнаты</h4>
+      ${conflictMarkup}
       <p class="room-type">${roomInfo.type}</p>
-      <p class="confidence">Уверенность: ${Math.round(roomInfo.confidence * 100)}%</p>
+      ${confidenceMarkup}
       
       <h4>💡 Освещение</h4>
       <div class="lighting-info">
@@ -2324,15 +2930,31 @@ function updateRoomInfoPanel(room = null) {
       
       <h4>🛋️ Рекомендации</h4>
       <ul class="recommendations">
-        ${recommendations.map(r => `
-          <li>
-            <strong>${r.name}</strong>
-            <br><small>${r.reason}</small>
-          </li>
-        `).join('')}
+        ${recommendationsMarkup}
       </ul>
     </div>
   `;
+
+  const roomPrevBtn = document.getElementById('roomPrevBtn');
+  const roomNextBtn = document.getElementById('roomNextBtn');
+  if (roomPrevBtn) {
+    roomPrevBtn.addEventListener('click', () => {
+      if (rooms.length === 0) return;
+      const current = Number.isInteger(appState.selectedRoomIndex) ? appState.selectedRoomIndex : 0;
+      const next = (current - 1 + rooms.length) % rooms.length;
+      appState.selectedRoomIndex = next;
+      updateRoomInfoPanel(next);
+    });
+  }
+  if (roomNextBtn) {
+    roomNextBtn.addEventListener('click', () => {
+      if (rooms.length === 0) return;
+      const current = Number.isInteger(appState.selectedRoomIndex) ? appState.selectedRoomIndex : 0;
+      const next = (current + 1) % rooms.length;
+      appState.selectedRoomIndex = next;
+      updateRoomInfoPanel(next);
+    });
+  }
   
   // Setup lighting toggle
   const lightingBtn = document.getElementById('toggleLighting');
@@ -2498,9 +3120,11 @@ function updateOpeningWorldPose(opening, wall) {
   opening.y = pos.y;
 }
 
-function saveToLocalStorage() {
-  localStorage.setItem('canvasObjects', JSON.stringify(appState.canvasObjects));
+function saveToLocalStorage(options = {}) {
   localStorage.setItem('projectName', appState.projectName);
+  if (!options.skipDirtyMark) {
+    appState.workspaceDirty = true;
+  }
 }
 
 function isTextInputActive() {
@@ -2600,17 +3224,6 @@ function setupKeyboardEventListeners() {
   });
 }
 
-function loadFromLocalStorage() {
-  const saved = localStorage.getItem('canvasObjects');
-  if (saved) appState.canvasObjects = JSON.parse(saved);
-  
-  const projectName = localStorage.getItem('projectName');
-  if (projectName) {
-    appState.projectName = projectName;
-    document.getElementById('projectName').value = projectName;
-  }
-}
-
 // =============== EVENT SETUP ===============
 function setupEventListeners() {
   setupCanvasEventListeners();
@@ -2656,18 +3269,24 @@ function setupEventListeners() {
   });
 
   document.getElementById('saveBtn').addEventListener('click', saveProject);
-  document.getElementById('moreBtn').addEventListener('click', () => {
+  document.getElementById('newWorkspaceBtn').addEventListener('click', () => {
+    newWorkspace();
+  });
+  document.getElementById('moreBtn').addEventListener('click', async () => {
     const choice = prompt('Enter action:\n1. Download project\n2. Load project');
     if (choice === '1') downloadProject();
     else if (choice === '2') {
       const id = prompt('Enter project ID:');
-      if (id) loadProject(id);
+      if (id) {
+        if (!(await confirmUnsavedBeforeLeave(`перед загрузкой проекта #${id}`))) return;
+        await loadProject(id);
+      }
     }
   });
 
   document.getElementById('createRoomBtn').addEventListener('click', () => {
-    const width = parseInt(prompt('Введите ширину комнаты (пиксели):', '600'), 10);
-      const height = parseInt(prompt('Введите высоту комнаты (пиксели):', '400'), 10);
+    const width = parseInt(prompt('Введите ширину комнаты (см, как на холсте):', '600'), 10);
+      const height = parseInt(prompt('Введите высоту комнаты (см, как на холсте):', '400'), 10);
       if (!isNaN(width) && !isNaN(height) && width > 0 && height > 0) {
         createStandardRoom(width, height);
       } else {

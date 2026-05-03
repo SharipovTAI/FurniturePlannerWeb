@@ -13,6 +13,7 @@
             <button id="menuBtn" title="Project list">☰</button>
             <input type="text" id="projectName" placeholder="Project name" class="project-name">
             <div class="actions">
+                <button id="newWorkspaceBtn" title="Новое рабочее пространство">📄 Новое пространство</button>
                 <button id="undoBtn" title="Previous project">←</button>
                 <button id="redoBtn" title="Next project">→</button>
                 <button id="measureToolBtn" title="Рулетка">📏 Рулетка</button>
@@ -20,7 +21,15 @@
                 <button id="createRoomBtn" title="Создать комнату">🏠 Создать комнату</button>
             </div>
             <button id="moreBtn" title="More">⋯</button>
-            <button id="loginBtn">Login</button>
+            <div class="header-auth" id="headerAuth">
+                <button type="button" id="loginBtn">Login</button>
+                <div class="header-auth-logged hidden" id="headerAuthLogged">
+                    <button type="button" class="header-auth-name" id="userNameMenuBtn" aria-expanded="false" aria-haspopup="true"></button>
+                    <div class="header-auth-dropdown hidden" id="userMenuDropdown" role="menu">
+                        <button type="button" id="logoutBtn" role="menuitem">Выйти</button>
+                    </div>
+                </div>
+            </div>
             <button id="saveBtn" class="save">Save</button>
         </div>
 
@@ -63,26 +72,26 @@
                 <div class="inspect-grid">
                     <div class="row">
                         <div class="field">
-                            <label>X:</label>
+                            <label>X (см):</label>
                             <input type="number" id="field-x">
                         </div>
                         <div class="field">
-                            <label>Y:</label>
+                            <label>Y (см):</label>
                             <input type="number" id="field-y">
                         </div>
                         <div class="field">
-                            <label>Z:</label>
-                            <input type="number" id="field-z">
+                            <label for="field-z" title="Больше Z — объект выше и перекрывает мебель с меньшим Z (стены, двери и окна без изменений)">Z (слой):</label>
+                            <input type="number" id="field-z" step="1">
                         </div>
                     </div>
 
                     <div class="row">
                         <div class="field">
-                            <label>Ширина:</label>
+                            <label>Ширина (см):</label>
                             <input type="number" id="field-width">
                         </div>
                         <div class="field">
-                            <label>Высота:</label>
+                            <label>Высота (см):</label>
                             <input type="number" id="field-height">
                         </div>
                         <div class="field">
@@ -105,6 +114,13 @@
                         <div class="field">
                             <input type="checkbox" id="field-locked">
                             <label for="field-locked">Locked</label>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="field">
+                            <input type="checkbox" id="field-ignore-overlap">
+                            <label for="field-ignore-overlap" title="С другой мебелью пересечение не считается ошибкой (стены и проёмы как обычно)">Без коллизий</label>
                         </div>
                     </div>
 
@@ -160,6 +176,7 @@
         </div>
     </div>
 
+    <script src="/static/js/objectSprites.js"></script>
     <script src="/static/js/app.js"></script>
     <script>
         // Initialize the application when DOM is loaded

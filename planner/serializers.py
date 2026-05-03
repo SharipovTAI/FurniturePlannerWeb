@@ -21,8 +21,9 @@ class FurnitureItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FurnitureItem
-        fields = ['id', 'name', 'subtype', 'item_type', 'custom_object', 'x', 'y', 'z_index', 
-                  'width', 'height', 'angle', 'color', 'visible', 'locked', 'comment', 'created_at']
+        fields = ['id', 'name', 'subtype', 'item_type', 'custom_object', 'x', 'y', 'z_index',
+                  'width', 'height', 'angle', 'color', 'visible', 'locked', 'ignore_overlap',
+                  'comment', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
