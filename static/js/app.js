@@ -49,6 +49,8 @@ let appState = {
   measureStartPoint: null,
   measurePreviewEndPoint: null,
   measureLines: [],
+  userProjects: [], // Список проектов пользователя
+  currentProjectIndex: -1, // Индекс текущего проекта в списке
 };
 
 // Modal state
@@ -68,6 +70,7 @@ async function init() {
     if (currentProjectId) {
       await loadProject(currentProjectId);
     }
+    await loadUserProjects(); // Загрузить список проектов для навигации
   }
 }
 
@@ -248,6 +251,25 @@ async function saveProject() {
   }
 }
 
+async function getUserProjects() {
+  if (!authToken) return [];
+
+  try {
+    const response = await fetch(`${API_URL}/projects/`, {
+      headers: {
+        'Authorization': `Token ${authToken}`,
+      },
+    });
+
+    if (!response.ok) throw new Error('Failed to load projects');
+    const projects = await response.json();
+    return projects;
+  } catch (error) {
+    console.error('Error loading projects:', error);
+    return [];
+  }
+}
+
 async function downloadProject() {
   if (!currentProjectId) {
     alert('No project to download');
@@ -327,6 +349,59 @@ async function loadProject(projectId) {
   } catch (error) {
     console.error('Error loading project:', error);
   }
+}
+
+async function loadUserProjects() {
+  appState.userProjects = await getUserProjects();
+  // Найти индекс текущего проекта
+  if (currentProjectId) {
+    appState.currentProjectIndex = appState.userProjects.findIndex(p => p.id === currentProjectId);
+  } else {
+    appState.currentProjectIndex = -1;
+  }
+}
+
+async function switchToProject(index) {
+  if (index < 0 || index >= appState.userProjects.length) return;
+  
+  const project = appState.userProjects[index];
+  appState.currentProjectIndex = index;
+  currentProjectId = project.id;
+  localStorage.setItem('currentProjectId', currentProjectId);
+  await loadProject(project.id);
+}
+
+async function showProjectList() {
+  await loadUserProjects();
+  
+  if (appState.userProjects.length === 0) {
+    alert('No projects found. Create a project first.');
+    return;
+  }
+
+  const projectList = appState.userProjects.map((project, index) => 
+    `${index + 1}. ${project.name} ${index === appState.currentProjectIndex ? '(current)' : ''}`
+  ).join('\n');
+
+  const choice = prompt(`Select project number:\n${projectList}`);
+  if (choice) {
+    const index = parseInt(choice) - 1;
+    if (index >= 0 && index < appState.userProjects.length) {
+      await switchToProject(index);
+    }
+  }
+}
+
+async function previousProject() {
+  if (appState.userProjects.length === 0) return;
+  const newIndex = appState.currentProjectIndex > 0 ? appState.currentProjectIndex - 1 : appState.userProjects.length - 1;
+  await switchToProject(newIndex);
+}
+
+async function nextProject() {
+  if (appState.userProjects.length === 0) return;
+  const newIndex = appState.currentProjectIndex < appState.userProjects.length - 1 ? appState.currentProjectIndex + 1 : 0;
+  await switchToProject(newIndex);
 }
 
 // =============== CUSTOM OBJECTS ===============
@@ -632,6 +707,7 @@ function setupCanvasEventListeners() {
   canvas.addEventListener('dragover', handleCanvasDragOver);
   canvas.addEventListener('dragleave', handleCanvasDragLeave);
   canvas.addEventListener('drop', handleCanvasDrop);
+  canvas.addEventListener('click', handleCanvasClick);
   canvas.addEventListener('click', handleCanvasMeasureClick, true);
   canvas.addEventListener('mousemove', handleCanvasMouseMove);
   canvas.addEventListener('mouseup', handleCanvasMouseUp);
@@ -645,6 +721,24 @@ function getCanvasPointerPosition(e) {
     x: e.clientX - rect.left,
     y: e.clientY - rect.top,
   };
+}
+
+function handleCanvasClick(e) {
+  // Don't handle if in measure mode or clicking on object
+  if (appState.isMeasureMode || e.target !== document.getElementById('canvas')) return;
+
+  const point = getCanvasPointerPosition(e);
+  const room = getRoomAtPoint(point);
+  
+  if (room) {
+    // Clear selection and update room info for clicked room
+    appState.selectedObject = null;
+    updateInspector();
+    updateRoomInfoPanel(room);
+  } else {
+    // Clicked outside any room - show overall info
+    updateRoomInfoPanel();
+  }
 }
 
 function handleCanvasMeasureClick(e) {
@@ -1249,6 +1343,39 @@ function projectPolygon(points, axis) {
   return { min, max };
 }
 
+function isPointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    if (((yi > point.y) !== (yj > point.y)) &&
+        (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function getRoomAtPoint(point) {
+  for (const room of appState.detectedRooms) {
+    if (isPointInPolygon(point, room.polygon)) {
+      return room;
+    }
+  }
+  return null;
+}
+
+function getFurnitureInRoom(room) {
+  if (!room) return [];
+  
+  return appState.canvasObjects.filter(obj => {
+    if (obj.type !== 'furniture') return false;
+    
+    // Check if object center is inside room polygon
+    return isPointInPolygon({ x: obj.x, y: obj.y }, room.polygon);
+  });
+}
+
 function polygonsOverlap(polyA, polyB) {
   const polygons = [polyA, polyB];
   for (const polygon of polygons) {
@@ -1829,16 +1956,16 @@ function setupInspectorEventListeners() {
       const obj = appState.selectedObject;
 
       switch (field) {
-        case 'x': obj.x = parseFloat(fieldX.value) || obj.x; break;
-        case 'y': obj.y = parseFloat(fieldY.value) || obj.y; break;
-        case 'z': obj.z = parseInt(fieldZ.value) || obj.z; break;
-        case 'width': obj.width = parseFloat(fieldWidth.value) || obj.width; break;
-        case 'height': obj.height = parseFloat(fieldHeight.value) || obj.height; break;
-        case 'angle': obj.angle = parseInt(fieldAngle.value) || 0; break;
-        case 'bearing': obj.bearing = fieldBearing.checked; break;
-        case 'visible': obj.visible = fieldVisible.checked; break;
-        case 'locked': obj.locked = fieldLocked.checked; break;
-        case 'comment': obj.comment = fieldComment.value; break;
+        case 'x': obj.x = parseFloat(fieldX?.value) || obj.x; break;
+        case 'y': obj.y = parseFloat(fieldY?.value) || obj.y; break;
+        case 'z': obj.z = parseInt(fieldZ?.value) || obj.z; break;
+        case 'width': obj.width = parseFloat(fieldWidth?.value) || obj.width; break;
+        case 'height': obj.height = parseFloat(fieldHeight?.value) || obj.height; break;
+        case 'angle': obj.angle = parseInt(fieldAngle?.value) || 0; break;
+        case 'bearing': obj.bearing = fieldBearing?.checked; break;
+        case 'visible': obj.visible = fieldVisible?.checked; break;
+        case 'locked': obj.locked = fieldLocked?.checked; break;
+        case 'comment': obj.comment = fieldComment?.value; break;
       }
 
       saveToLocalStorage();
@@ -1847,13 +1974,14 @@ function setupInspectorEventListeners() {
   };
 
   [fieldX, fieldY, fieldZ, fieldWidth, fieldHeight, fieldAngle].forEach(field => {
+    if (!field) return;
     field.addEventListener('change', updateField(field.id.split('-')[1]));
   });
 
-  fieldBearing.addEventListener('change', updateField('bearing'));
-  fieldVisible.addEventListener('change', updateField('visible'));
-  fieldLocked.addEventListener('change', updateField('locked'));
-  fieldComment.addEventListener('change', updateField('comment'));
+  if (fieldBearing) fieldBearing.addEventListener('change', updateField('bearing'));
+  if (fieldVisible) fieldVisible.addEventListener('change', updateField('visible'));
+  if (fieldLocked) fieldLocked.addEventListener('change', updateField('locked'));
+  if (fieldComment) fieldComment.addEventListener('change', updateField('comment'));
 
   btnDelete.addEventListener('click', () => {
     if (appState.selectedObject) {
@@ -1885,27 +2013,11 @@ function setupInspectorEventListeners() {
   });
 }
 
-// =============== ZOOM ===============
-function setupZoomEventListeners() {
-  const zoomInBtn = document.getElementById('zoomInBtn');
-  const zoomOutBtn = document.getElementById('zoomOutBtn');
-  const zoomLabel = document.getElementById('zoomLabel');
-
-  zoomInBtn.addEventListener('click', () => {
-    appState.zoom = Math.min(appState.zoom + 0.1, 3);
-    zoomLabel.textContent = Math.round(appState.zoom * 100) + '%';
-  });
-
-  zoomOutBtn.addEventListener('click', () => {
-    appState.zoom = Math.max(appState.zoom - 0.1, 0.5);
-    zoomLabel.textContent = Math.round(appState.zoom * 100) + '%';
-  });
-}
 
 // =============== ROOM TYPE DETECTION ===============
-function detectRoomType() {
-  const furniture = appState.canvasObjects.filter(obj => obj.type === 'furniture');
-  const subtypes = furniture.map(f => f.subtype.toLowerCase());
+function detectRoomType(furniture = null) {
+  const furnitureList = furniture || appState.canvasObjects.filter(obj => obj.type === 'furniture');
+  const subtypes = furnitureList.map(f => f.subtype.toLowerCase());
   
   // Count furniture types
   const counts = {
@@ -1936,7 +2048,7 @@ function detectRoomType() {
   } else if (counts.cabinet >= 2) {
     roomType = 'Гардероб';
     confidence = 0.65;
-  } else if (furniture.length > 0) {
+  } else if (furnitureList.length > 0) {
     roomType = 'Неизвестная';
     confidence = 0.3;
   }
@@ -2022,7 +2134,7 @@ function analyzeLighting() {
   // Размер области анализа (подберите под свой проект)
   const width = 2000;
   const height = 1600;
-  const gridSize = 10; // чем меньше, тем точнее, но медленнее
+  const gridSize = 1; // чем меньше, тем точнее, но медленнее
   const xOffset = 0;
   const yOffset = 0;
 
@@ -2183,15 +2295,17 @@ function createStandardRoom(width, height) {
   renderCanvas();
 }
 // =============== UI UPDATES ===============
-function updateRoomInfoPanel() {
-  const roomInfo = detectRoomType();
+function updateRoomInfoPanel(room = null) {
+  const furniture = room ? getFurnitureInRoom(room) : null;
+  const roomInfo = detectRoomType(furniture);
   const infoPanelSelector = '#room-info-panel';
   
   if (!document.querySelector(infoPanelSelector)) {
     const panel = document.createElement('div');
     panel.id = 'room-info-panel';
     panel.className = 'room-info-panel';
-    document.querySelector('.canvas').appendChild(panel);
+    const inspector = document.querySelector('.inspector') || document.querySelector('.canvas');
+    if (inspector) inspector.appendChild(panel);
   }
   
   const panel = document.querySelector(infoPanelSelector);
@@ -2501,7 +2615,6 @@ function loadFromLocalStorage() {
 function setupEventListeners() {
   setupCanvasEventListeners();
   setupInspectorEventListeners();
-  setupZoomEventListeners();
   setupKeyboardEventListeners();
   setupAuthUI();
   setupCustomObjectUI();
@@ -2560,7 +2673,12 @@ function setupEventListeners() {
       } else {
         alert('Некорректные размеры. Используйте положительные числа.');
       }
-  })
+  });
+
+  // Project navigation
+  document.getElementById('menuBtn').addEventListener('click', showProjectList);
+  document.getElementById('undoBtn').addEventListener('click', previousProject);
+  document.getElementById('redoBtn').addEventListener('click', nextProject);
 }
 
 if (authToken) {
