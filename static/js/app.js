@@ -2056,8 +2056,13 @@ function renderCanvas() {
     if (obj.type === 'wall') {
       el.style.backgroundColor = obj.color;
       el.style.backgroundImage = 'none';
-      el.style.color = 'white';
-      el.textContent = '';
+      el.style.color = 'rgba(255,255,255,0.96)';
+      el.style.fontSize = '9px';
+      el.style.letterSpacing = '0.14em';
+      el.style.lineHeight = '1';
+      el.style.textShadow = '0 0 4px #000, 0 1px 2px rgba(0,0,0,0.85)';
+      el.style.whiteSpace = 'nowrap';
+      el.textContent = 'СТЕНА';
     } else {
       el.style.color = 'transparent';
       el.textContent = '';
