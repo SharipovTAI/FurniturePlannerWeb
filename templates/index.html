@@ -66,7 +66,6 @@
             <div class="inspector">
                 <div class="inspector-header">
                     <h3 id="inspector-title">Выбрать объект</h3>
-                    <div class="preview-box" id="preview-box"></div>
                 </div>
 
                 <div class="inspect-grid">
@@ -95,47 +94,36 @@
                             <input type="number" id="field-height">
                         </div>
                         <div class="field">
-                            <label>Угол:</label>
+                            <label>Угол (градусы):</label>
                             <input type="number" id="field-angle" step="1" min="0" max="359">
                         </div>
                     </div>
 
                     <div class="row">
                         <div class="field">
-                            <input type="checkbox" id="field-bearing">
-                            <label for="field-bearing">Несущая стена</label>
-                        </div>
-
-                        <div class="field">
-                            <input type="checkbox" id="field-visible" checked>
-                            <label for="field-visible">Видимый</label>
-                        </div>
-
-                        <div class="field">
-                            <input type="checkbox" id="field-locked">
-                            <label for="field-locked">Locked</label>
-                        </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="field">
-                            <input type="checkbox" id="field-ignore-overlap">
-                            <label for="field-ignore-overlap" title="С другой мебелью пересечение не считается ошибкой (стены и проёмы как обычно)">Без коллизий</label>
-                        </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="field">
                             <label>Комментарии:</label>
-                            <textarea id="field-comment" rows="3" style="width: 330%; resize: vertical;"></textarea>
+                            <textarea id="field-comment" rows="3" style="width: 540%; resize: vertical;"></textarea>
                         </div>
                     </div>
                 </div>
 
-                <div class="buttons">
-                    <button id="btn-visibility">👁</button>
-                    <button id="btn-lock">🔒</button>
-                    <button id="btn-delete">🗑</button>
+                <div class="inspector-actions" role="toolbar" aria-label="Действия с объектом">
+                    <button type="button" id="btn-visibility" class="inspector-action" title="Показать или скрыть объект на плане">
+                        <span class="inspector-action-icon" aria-hidden="true">👁</span>
+                        <span class="inspector-action-caption">Видимость</span>
+                    </button>
+                    <button type="button" id="btn-lock" class="inspector-action" title="Заблокировать перемещение и удаление">
+                        <span class="inspector-action-icon" aria-hidden="true">🔒</span>
+                        <span class="inspector-action-caption">Блокировка</span>
+                    </button>
+                    <button type="button" id="btn-ignore-overlap" class="inspector-action" title="С другой мебелью пересечение не считается ошибкой">
+                        <span class="inspector-action-icon" aria-hidden="true">⊘</span>
+                        <span class="inspector-action-caption">Без коллизий</span>
+                    </button>
+                    <button type="button" id="btn-delete" class="inspector-action inspector-action--danger" title="Удалить объект">
+                        <span class="inspector-action-icon" aria-hidden="true">🗑</span>
+                        <span class="inspector-action-caption">Удалить</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -169,7 +157,7 @@
                 <input type="number" id="uploadWidth" placeholder="Width" required>
                 <input type="number" id="uploadHeight" placeholder="Height" required>
                 <input type="color" id="uploadColor" value="#888888">
-                <input type="file" id="uploadFile" accept=".svg,.obj,.png,.jpg">
+                <input type="file" id="uploadFile" accept=".svg,.png,.jpg,.jpeg,.webp,.gif,.obj">
                 <button type="submit">Upload</button>
             </form>
             <div id="uploadMessage"></div>

@@ -7,6 +7,23 @@ let authToken = localStorage.getItem('authToken');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let currentProjectId = localStorage.getItem('currentProjectId');
 
+/** Нормализует URL файла с сервера (относительный /media/... или абсолютный). */
+function resolveCustomImageUrl(filePath) {
+  if (filePath == null || filePath === '') return null;
+  const s = String(filePath).trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith('/')) return s;
+  return '/' + s.replace(/^\/+/, '');
+}
+
+function isRenderableCustomImageUrl(url) {
+  if (url == null || url === '') return false;
+  const s = String(url).trim().split('?')[0].toLowerCase();
+  if (s.startsWith('data:image/')) return true;
+  return /\.(png|jpe?g|webp|gif|svg)$/.test(s);
+}
+
 // Furniture and wall data
 const furnitureItems = [
   { type: 'furniture', subtype: 'table', name: 'Стол', width: 100, height: 100, color: '#8B4513' },
@@ -268,6 +285,10 @@ function markWorkspaceClean() {
   appState.workspaceDirty = false;
 }
 
+function markWorkspaceDirty() {
+  appState.workspaceDirty = true;
+}
+
 function rememberCurrentProjectOwner() {
   if (currentUser && currentUser.id != null) {
     localStorage.setItem('currentProjectOwnerUserId', String(currentUser.id));
@@ -463,6 +484,7 @@ async function saveProjectToServer() {
         name: obj.name,
         subtype: obj.subtype || 'furniture',
         item_type: obj.customId ? 'custom' : 'preset',
+        custom_object_id: obj.customId != null ? obj.customId : null,
         x: obj.x,
         y: obj.y,
         z: obj.z || 0,
@@ -646,6 +668,11 @@ async function loadProject(projectId) {
           continue;
         }
       }
+      const co = item.custom_object;
+      const rawUrl = co && co.file_path != null ? co.file_path : null;
+      const customImageUrl = isRenderableCustomImageUrl(resolveCustomImageUrl(rawUrl))
+        ? resolveCustomImageUrl(rawUrl)
+        : null;
       appState.canvasObjects.push({
         id: clientId,
         name: item.name,
@@ -662,7 +689,8 @@ async function loadProject(projectId) {
         locked: !!item.locked,
         ignoreOverlap: !!item.ignore_overlap,
         comment: item.comment || '',
-        customId: item.custom_object?.id,
+        customId: co?.id,
+        customImageUrl,
       });
     }
 
@@ -808,6 +836,37 @@ async function setupCustomObjectUI() {
   });
 }
 
+async function deleteCustomFurniture(id) {
+  if (!authToken) {
+    alert('Войдите в аккаунт, чтобы удалять объекты');
+    return;
+  }
+  if (!confirm('Удалить этот объект из списка? Он будет удалён с сервера; экземпляры на плане тоже исчезнут.')) {
+    return;
+  }
+  try {
+    const response = await fetch(`${API_URL}/custom-furniture/${id}/`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Token ${authToken}`,
+      },
+    });
+    if (!response.ok) throw new Error('Не удалось удалить объект');
+    appState.customObjects = appState.customObjects.filter(o => o.id !== id);
+    const selId = appState.selectedObject?.id;
+    appState.canvasObjects = appState.canvasObjects.filter(o => o.customId !== id);
+    if (selId != null && !appState.canvasObjects.some(o => o.id === selId)) {
+      appState.selectedObject = null;
+    }
+    renderSidebar();
+    renderCanvas();
+    updateInspector();
+    markWorkspaceDirty();
+  } catch (err) {
+    alert(err.message || 'Ошибка удаления');
+  }
+}
+
 async function loadCustomObjects() {
   if (!authToken) return;
 
@@ -841,6 +900,8 @@ function renderSidebar() {
   // Doors/windows are shown together with walls.
   openingItems.forEach(item => wallGrid.appendChild(createSidebarItem(item)));
   appState.customObjects.forEach(item => {
+    const resolved = resolveCustomImageUrl(item.file_path);
+    const customImageUrl = isRenderableCustomImageUrl(resolved) ? resolved : null;
     const sidebarItem = {
       type: 'furniture',
       subtype: 'custom',
@@ -849,8 +910,26 @@ function renderSidebar() {
       height: item.height,
       color: item.color,
       customId: item.id,
+      customImageUrl,
     };
-    customGrid.appendChild(createSidebarItem(sidebarItem));
+    const wrap = document.createElement('div');
+    wrap.className = 'sidebar-custom-wrap';
+    const el = createSidebarItem(sidebarItem);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'sidebar-custom-delete';
+    delBtn.title = 'Удалить объект';
+    delBtn.setAttribute('aria-label', 'Удалить объект');
+    delBtn.textContent = '×';
+    delBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteCustomFurniture(item.id);
+    });
+    delBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+    wrap.appendChild(el);
+    wrap.appendChild(delBtn);
+    customGrid.appendChild(wrap);
   });
 }
 
@@ -1064,9 +1143,9 @@ function setupCanvasEventListeners() {
   canvas.addEventListener('drop', handleCanvasDrop);
   canvas.addEventListener('click', handleCanvasClick);
   canvas.addEventListener('click', handleCanvasMeasureClick, true);
-  canvas.addEventListener('mousemove', handleCanvasMouseMove);
-  canvas.addEventListener('mouseup', handleCanvasMouseUp);
-  canvas.addEventListener('mouseleave', handleCanvasMouseUp);
+  // document: перетаскивание и вращение не пропадают, если курсор ушёл с холста (инспектор/сайдбар)
+  document.addEventListener('mousemove', handleCanvasMouseMove);
+  document.addEventListener('mouseup', handleCanvasMouseUp);
 }
 
 function getCanvasPointerPosition(e) {
@@ -1263,6 +1342,7 @@ function handleCanvasDrop(e) {
       locked: false,
       ignoreOverlap: false,
       customId: item.customId,
+      customImageUrl: item.customImageUrl || null,
     };
 
     if (item.type === 'wall') {
@@ -1310,7 +1390,12 @@ function handleCanvasMouseMove(e) {
     renderCanvas();
   }
 
+  if (!appState.rotatingObject && !appState.draggingObject) {
+    return;
+  }
+
   const canvas = document.getElementById('canvas');
+  if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
@@ -2090,7 +2175,7 @@ function renderCanvas() {
     } else {
       el.style.zIndex = 3000 + zInt;
     }
-    el.style.opacity = obj.visible ? 1 : 0.5;
+    el.style.opacity = obj.visible !== false ? 1 : 0.5;
     el.style.transform = `rotate(${obj.angle || 0}deg)`;
     el.style.transformOrigin = 'center center';
 
@@ -2104,7 +2189,6 @@ function renderCanvas() {
     }
 
     el.addEventListener('mousedown', (e) => handleObjectMouseDown(e, obj));
-    el.addEventListener('dblclick', () => deleteObject(obj.id));
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       selectObject(obj);
@@ -2251,15 +2335,20 @@ function handleObjectMouseDown(e, obj) {
   if (obj.locked) return;
 
   e.preventDefault();
-  selectObject(obj);
+  appState.selectedObject = obj;
 
   const canvas = document.getElementById('canvas');
   const rect = canvas.getBoundingClientRect();
   const offsetX = e.clientX - rect.left - obj.x;
   const offsetY = e.clientY - rect.top - obj.y;
 
+  // Установить перетаскивание до renderCanvas: иначе цель mousedown уничтожается
+  // при перерисовке до выставления draggingObject — в части окружений drag ломается.
   appState.draggingObject = obj.id;
   appState.dragOffset = { x: offsetX, y: offsetY };
+
+  updateInspector();
+  renderCanvas();
 }
 
 function handleRotateMouseDown(e, obj) {
@@ -2313,89 +2402,96 @@ function updateInspector() {
   const fieldWidth = document.getElementById('field-width');
   const fieldHeight = document.getElementById('field-height');
   const fieldAngle = document.getElementById('field-angle');
-  const fieldBearing = document.getElementById('field-bearing');
-  const fieldVisible = document.getElementById('field-visible');
-  const fieldLocked = document.getElementById('field-locked');
-  const fieldIgnoreOverlap = document.getElementById('field-ignore-overlap');
   const fieldComment = document.getElementById('field-comment');
-  const previewBox = document.getElementById('preview-box');
   const btnDelete = document.getElementById('btn-delete');
   const btnVisibility = document.getElementById('btn-visibility');
   const btnLock = document.getElementById('btn-lock');
+  const btnBearing = document.getElementById('btn-bearing');
+  const btnIgnoreOverlap = document.getElementById('btn-ignore-overlap');
+
+  const setToggleOn = (btn, on) => {
+    if (!btn) return;
+    btn.classList.toggle('inspector-action--on', Boolean(on));
+  };
 
   if (!appState.selectedObject) {
-    inspectorTitle.textContent = 'Select an object';
-    fieldX.value = '';
-    fieldY.value = '';
-    fieldZ.value = '';
-    fieldWidth.value = '';
-    fieldHeight.value = '';
-    fieldAngle.value = '';
-    fieldBearing.checked = false;
-    fieldVisible.checked = true;
-    fieldLocked.checked = false;
-    if (fieldIgnoreOverlap) {
-      fieldIgnoreOverlap.checked = false;
-      fieldIgnoreOverlap.disabled = true;
+    if (inspectorTitle) inspectorTitle.textContent = 'Select an object';
+    if (fieldX) {
+      fieldX.value = '';
+      fieldX.disabled = true;
     }
-    fieldComment.value = '';
-    previewBox.style.backgroundColor = '#f8f9ff';
-    fieldX.disabled = true;
-    fieldY.disabled = true;
-    fieldZ.disabled = true;
-    fieldWidth.disabled = true;
-    fieldHeight.disabled = true;
-    fieldAngle.disabled = true;
-    fieldBearing.disabled = true;
-    fieldVisible.disabled = true;
-    fieldLocked.disabled = true;
-    fieldComment.disabled = true;
+    if (fieldY) {
+      fieldY.value = '';
+      fieldY.disabled = true;
+    }
+    if (fieldZ) {
+      fieldZ.value = '';
+      fieldZ.disabled = true;
+    }
+    if (fieldWidth) {
+      fieldWidth.value = '';
+      fieldWidth.disabled = true;
+    }
+    if (fieldHeight) {
+      fieldHeight.value = '';
+      fieldHeight.disabled = true;
+    }
+    if (fieldAngle) {
+      fieldAngle.value = '';
+      fieldAngle.disabled = true;
+    }
+    if (fieldComment) {
+      fieldComment.value = '';
+      fieldComment.disabled = true;
+    }
 
-    btnDelete.disabled = true;
-    btnVisibility.disabled = true;
-    btnLock.disabled = true;
+    setToggleOn(btnVisibility, false);
+    setToggleOn(btnLock, false);
+    setToggleOn(btnBearing, false);
+    setToggleOn(btnIgnoreOverlap, false);
+    if (btnDelete) btnDelete.disabled = true;
+    if (btnVisibility) btnVisibility.disabled = true;
+    if (btnLock) btnLock.disabled = true;
+    if (btnBearing) btnBearing.disabled = true;
+    if (btnIgnoreOverlap) btnIgnoreOverlap.disabled = true;
     return;
   }
 
   const obj = appState.selectedObject;
 
-  inspectorTitle.textContent = obj.name;
-  fieldX.value = Math.round(obj.x);
-  fieldY.value = Math.round(obj.y);
-  fieldZ.value = obj.z;
-  fieldWidth.value = obj.width;
-  fieldHeight.value = obj.height;
-  fieldAngle.value = Math.round(obj.angle || 0);
-  fieldBearing.checked = obj.bearing || false;
-  fieldVisible.checked = obj.visible !== false;
-  fieldLocked.checked = obj.locked || false;
-  if (fieldIgnoreOverlap) {
-    const isFurniture = obj.type === 'furniture';
-    fieldIgnoreOverlap.disabled = !isFurniture;
-    fieldIgnoreOverlap.checked = isFurniture ? !!obj.ignoreOverlap : false;
-  }
-  fieldComment.value = obj.comment || '';
-  previewBox.style.backgroundColor = obj.color;
-  
-  fieldX.disabled = false;
-  fieldY.disabled = false;
-  fieldZ.disabled = obj.type === 'wall';
-  fieldWidth.disabled = false;
-  fieldHeight.disabled = false;
-  fieldAngle.disabled = false;
-  fieldBearing.disabled = obj.type !== 'wall';
-  fieldVisible.disabled = false;
-  fieldLocked.disabled = false;
-  fieldComment.disabled = false;
-  btnDelete.disabled = false;
-  btnVisibility.disabled = false;
-  btnLock.disabled = false;
+  if (inspectorTitle) inspectorTitle.textContent = obj.name;
+  if (fieldX) fieldX.value = Math.round(obj.x);
+  if (fieldY) fieldY.value = Math.round(obj.y);
+  if (fieldZ) fieldZ.value = obj.z;
+  if (fieldWidth) fieldWidth.value = obj.width;
+  if (fieldHeight) fieldHeight.value = obj.height;
+  if (fieldAngle) fieldAngle.value = Math.round(obj.angle || 0);
+  if (fieldComment) fieldComment.value = obj.comment || '';
+
+  setToggleOn(btnVisibility, obj.visible !== false);
+  setToggleOn(btnLock, !!obj.locked);
+  setToggleOn(btnBearing, !!obj.bearing);
+  setToggleOn(btnIgnoreOverlap, !!obj.ignoreOverlap);
+
+  if (fieldX) fieldX.disabled = false;
+  if (fieldY) fieldY.disabled = false;
+  if (fieldZ) fieldZ.disabled = obj.type === 'wall';
+  if (fieldWidth) fieldWidth.disabled = false;
+  if (fieldHeight) fieldHeight.disabled = false;
+  if (fieldAngle) fieldAngle.disabled = false;
+  if (fieldComment) fieldComment.disabled = false;
+
+  if (btnBearing) btnBearing.disabled = obj.type !== 'wall';
+  if (btnIgnoreOverlap) btnIgnoreOverlap.disabled = obj.type !== 'furniture';
+  if (btnDelete) btnDelete.disabled = !!obj.locked;
+  if (btnVisibility) btnVisibility.disabled = false;
+  if (btnLock) btnLock.disabled = false;
 
   if (obj.type === 'opening') {
-    fieldX.disabled = true;
-    fieldY.disabled = true;
-    fieldAngle.disabled = true;
-    fieldHeight.disabled = true;
+    if (fieldX) fieldX.disabled = true;
+    if (fieldY) fieldY.disabled = true;
+    if (fieldAngle) fieldAngle.disabled = true;
+    if (fieldHeight) fieldHeight.disabled = true;
   }
 }
 
@@ -2406,14 +2502,12 @@ function setupInspectorEventListeners() {
   const fieldWidth = document.getElementById('field-width');
   const fieldHeight = document.getElementById('field-height');
   const fieldAngle = document.getElementById('field-angle');
-  const fieldBearing = document.getElementById('field-bearing');
-  const fieldVisible = document.getElementById('field-visible');
-  const fieldLocked = document.getElementById('field-locked');
-  const fieldIgnoreOverlap = document.getElementById('field-ignore-overlap');
   const fieldComment = document.getElementById('field-comment');
   const btnDelete = document.getElementById('btn-delete');
   const btnVisibility = document.getElementById('btn-visibility');
   const btnLock = document.getElementById('btn-lock');
+  const btnBearing = document.getElementById('btn-bearing');
+  const btnIgnoreOverlap = document.getElementById('btn-ignore-overlap');
   const projectNameInput = document.getElementById('projectName');
 
   const updateField = (field) => {
@@ -2428,10 +2522,6 @@ function setupInspectorEventListeners() {
         case 'width': obj.width = parseFloat(fieldWidth?.value) || obj.width; break;
         case 'height': obj.height = parseFloat(fieldHeight?.value) || obj.height; break;
         case 'angle': obj.angle = parseInt(fieldAngle?.value) || 0; break;
-        case 'bearing': obj.bearing = fieldBearing?.checked; break;
-        case 'visible': obj.visible = fieldVisible?.checked; break;
-        case 'locked': obj.locked = fieldLocked?.checked; break;
-        case 'ignoreOverlap': if (obj.type === 'furniture') obj.ignoreOverlap = fieldIgnoreOverlap?.checked; break;
         case 'comment': obj.comment = fieldComment?.value; break;
       }
 
@@ -2445,40 +2535,64 @@ function setupInspectorEventListeners() {
     field.addEventListener('change', updateField(field.id.split('-')[1]));
   });
 
-  if (fieldBearing) fieldBearing.addEventListener('change', updateField('bearing'));
-  if (fieldVisible) fieldVisible.addEventListener('change', updateField('visible'));
-  if (fieldLocked) fieldLocked.addEventListener('change', updateField('locked'));
-  if (fieldIgnoreOverlap) fieldIgnoreOverlap.addEventListener('change', updateField('ignoreOverlap'));
   if (fieldComment) fieldComment.addEventListener('change', updateField('comment'));
 
-  btnDelete.addEventListener('click', () => {
-    if (appState.selectedObject) {
-      deleteObject(appState.selectedObject.id);
-    }
-  });
+  if (btnDelete) {
+    btnDelete.addEventListener('click', () => {
+      if (appState.selectedObject) {
+        deleteObject(appState.selectedObject.id);
+      }
+    });
+  }
 
-  btnVisibility.addEventListener('click', () => {
-    if (appState.selectedObject) {
-      appState.selectedObject.visible = !appState.selectedObject.visible;
+  if (btnVisibility) {
+    btnVisibility.addEventListener('click', () => {
+      if (appState.selectedObject) {
+        appState.selectedObject.visible = !appState.selectedObject.visible;
+        saveToLocalStorage();
+        updateInspector();
+        renderCanvas();
+      }
+    });
+  }
+
+  if (btnLock) {
+    btnLock.addEventListener('click', () => {
+      if (appState.selectedObject) {
+        appState.selectedObject.locked = !appState.selectedObject.locked;
+        saveToLocalStorage();
+        updateInspector();
+        renderCanvas();
+      }
+    });
+  }
+
+  if (btnBearing) {
+    btnBearing.addEventListener('click', () => {
+      if (!appState.selectedObject || appState.selectedObject.type !== 'wall') return;
+      appState.selectedObject.bearing = !appState.selectedObject.bearing;
       saveToLocalStorage();
       updateInspector();
       renderCanvas();
-    }
-  });
+    });
+  }
 
-  btnLock.addEventListener('click', () => {
-    if (appState.selectedObject) {
-      appState.selectedObject.locked = !appState.selectedObject.locked;
+  if (btnIgnoreOverlap) {
+    btnIgnoreOverlap.addEventListener('click', () => {
+      if (!appState.selectedObject || appState.selectedObject.type !== 'furniture') return;
+      appState.selectedObject.ignoreOverlap = !appState.selectedObject.ignoreOverlap;
       saveToLocalStorage();
       updateInspector();
       renderCanvas();
-    }
-  });
+    });
+  }
 
-  projectNameInput.addEventListener('change', () => {
-    appState.projectName = projectNameInput.value || 'Untitled Project';
-    saveToLocalStorage();
-  });
+  if (projectNameInput) {
+    projectNameInput.addEventListener('change', () => {
+      appState.projectName = projectNameInput.value || 'Untitled Project';
+      saveToLocalStorage();
+    });
+  }
 }
 
 
@@ -2872,6 +2986,7 @@ function updateRoomInfoPanel(room = null) {
   }
   
   const panel = document.querySelector(infoPanelSelector);
+  if (!panel) return;
   let recommendationsMarkup;
   if (roomInfo.conflict && roomInfo.conflictCategories && roomInfo.conflictCategories.length > 1) {
     const conflictRecs = getConflictResolutionRecommendationItems(roomInfo.conflictCategories);

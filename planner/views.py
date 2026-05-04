@@ -261,11 +261,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
         # Создаём мебель
         furniture_data = data.get('furniture', [])
         for item_data in furniture_data:
+            custom_obj = None
+            if item_data.get('item_type') == 'custom':
+                cid = item_data.get('custom_object_id')
+                if cid is not None:
+                    custom_obj = CustomFurnitureObject.objects.filter(
+                        id=cid, user=request.user
+                    ).first()
+
             FurnitureItem.objects.create(
                 project=project,
                 name=item_data.get('name', 'Item'),
                 subtype=item_data.get('subtype', 'custom'),
                 item_type=item_data.get('item_type', 'preset'),
+                custom_object=custom_obj,
                 x=item_data.get('x', 0),
                 y=item_data.get('y', 0),
                 z_index=item_data.get('z', 0),

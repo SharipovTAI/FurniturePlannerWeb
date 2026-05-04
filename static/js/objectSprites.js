@@ -137,11 +137,15 @@
       '</svg>',
   };
 
-  function furnitureUrl(subtype, color) {
+  function furnitureUrl(subtype, color, customImageUrl) {
     var key = String(subtype || '').toLowerCase();
     var raster = planRasterUrl(key);
     if (raster) return raster;
-    if (key === 'custom') return svgDataUrl(customSvg(color));
+    if (key === 'custom') {
+      var cu = customImageUrl && String(customImageUrl).trim();
+      if (cu) return cu;
+      return svgDataUrl(customSvg(color));
+    }
     var svg = FURNITURE[key] || FURNITURE.table;
     return svgDataUrl(svg);
   }
@@ -156,7 +160,7 @@
       return svgDataUrl(svg);
     }
     if (obj.type === 'furniture') {
-      return furnitureUrl(obj.subtype, obj.color);
+      return furnitureUrl(obj.subtype, obj.color, obj.customImageUrl);
     }
     return null;
   }
@@ -191,6 +195,7 @@
       type: item.type,
       subtype: item.subtype,
       color: item.color,
+      customImageUrl: item.customImageUrl,
     };
     const url = getDataUrl(pseudo);
     if (url) {
@@ -211,6 +216,7 @@
       type: item.type,
       subtype: item.subtype,
       color: item.color,
+      customImageUrl: item.customImageUrl,
     };
     styleCanvasElement(el, pseudo, { preview: true });
   }
