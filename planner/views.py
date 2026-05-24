@@ -1,8 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.shortcuts import get_object_or_404
+from rest_framework.permissions import IsAuthenticated
 from django.http import HttpResponse
 import json
 from datetime import datetime
@@ -15,10 +14,6 @@ from .serializers import (
 
 
 class CustomFurnitureObjectViewSet(viewsets.ModelViewSet):
-    """
-    API endpoint for managing custom furniture objects.
-    Users can upload/download their custom furniture definitions.
-    """
     serializer_class = CustomFurnitureObjectSerializer
     permission_classes = [IsAuthenticated]
 
@@ -30,7 +25,6 @@ class CustomFurnitureObjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def upload(self, request):
-        """Upload a custom furniture object"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(user=request.user)
@@ -38,9 +32,6 @@ class CustomFurnitureObjectViewSet(viewsets.ModelViewSet):
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
-    """
-    API endpoint for managing furniture planning projects.
-    """
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -56,7 +47,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def save_layout(self, request, pk=None):
-        """Save the furniture layout to the project"""
         project = self.get_object()
         project.data = request.data.get('data', {})
         project.save()
@@ -64,10 +54,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
-        """Download project as JSON file"""
         project = self.get_object()
         
-        # Prepare project data
         project_data = {
             'id': project.id,
             'name': project.name,
@@ -116,7 +104,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'comment': item.comment,
             })
         
-        # Create JSON response
         response = HttpResponse(
             json.dumps(project_data, indent=2),
             content_type='application/json'
@@ -126,7 +113,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def import_project(self, request):
-        """Import a project from JSON file"""
         data = request.data
         
         project = Project.objects.create(
@@ -155,7 +141,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
             wall_map[wall_data.get('id')] = wall
         
-        # Import furniture items
         item_map = {}
         for item_data in data.get('furniture_items', []):
             item = FurnitureItem.objects.create(
@@ -183,7 +168,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post', 'get'])
     def walls(self, request, pk=None):
-        """List or create walls for a project"""
         project = self.get_object()
         
         if request.method == 'POST':
@@ -233,11 +217,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
     @action(detail=True, methods=['post'])
     def sync_project(self, request, pk=None):
-        """Полностью заменяет стены и мебель проекта переданными данными"""
         project = self.get_object()
         data = request.data
 
-        # Удаляем всё существующее
         project.walls.all().delete()
         project.furniture_items.all().delete()
 
@@ -258,7 +240,6 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 visible=wall_data.get('visible', True),
             )
 
-        # Создаём мебель
         furniture_data = data.get('furniture', [])
         for item_data in furniture_data:
             custom_obj = None

@@ -1,29 +1,9 @@
-/**
- * Картинки плана: можно подключить свои файлы из static/img/plan/
- * (см. PLAN_EXTERNAL_URL ниже). Если для типа URL не задан — используется встроенный SVG.
- * Стены без картинок — в app.js.
- */
 (function () {
   'use strict';
 
-  /** Базовый URL папки (Django отдаёт как /static/...). */
   var PLAN_IMAGE_BASE = '/static/img/plan/';
 
-  /**
-   * Свои текстуры: добавьте строку только для тех типов, для которых положили файл.
-   * Ключ = subtype в коде (латиница, как в списке ниже).
-   * Файлы кладите в: FurniturePlannerWeb-Frontend/static/img/plan/
-   *
-   * Имена файлов (рекомендуется):
-   *   table.png, chair.png, sofa.png, cabinet.png, bed.png,
-   *   toilet.png, bathtub.png, microwave.png, stove.png, lamp.png,
-   *   door.png, window.png, custom.png
-   * Формат: png, webp или jpg (в URL укажите расширение как у файла).
-   */
   var PLAN_EXTERNAL_URL = {
-    // Примеры — раскомментируйте после добавления файла:
-    // table: PLAN_IMAGE_BASE + 'table.png',
-    // bed: PLAN_IMAGE_BASE + 'bed.webp',
     bathtub: PLAN_IMAGE_BASE + 'bathtub.png',
     bed: PLAN_IMAGE_BASE + 'bed.png',
     cabinet: PLAN_IMAGE_BASE + 'cabinet.png',

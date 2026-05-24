@@ -4,7 +4,6 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class CustomFurnitureObject(models.Model):
-    """User-defined custom furniture objects"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='custom_furnitures')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
@@ -23,7 +22,6 @@ class CustomFurnitureObject(models.Model):
 
 
 class Project(models.Model):
-    """Furniture planning projects"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='projects')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
@@ -41,7 +39,6 @@ class Project(models.Model):
 
 
 class Wall(models.Model):
-    """Walls in a project"""
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='walls')
     name = models.CharField(max_length=255, default='Wall')
     x = models.FloatField(default=0)
@@ -59,7 +56,6 @@ class Wall(models.Model):
 
 
 class FurnitureItem(models.Model):
-    """Individual furniture items in a project"""
     ITEM_TYPE_CHOICES = [
         ('preset', 'Preset Furniture'),
         ('custom', 'Custom Object'),
